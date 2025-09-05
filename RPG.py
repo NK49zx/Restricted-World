@@ -2,6 +2,12 @@ from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
 import math
+import random
+import time
+
+# --- Time Management ---
+last_time = time.time()
+total_time = 0.0
 
 # --- Game State and Player Stats ---
 game_state = "character_creation" # Can be "character_creation" or "playing"
@@ -33,6 +39,34 @@ class Player:
         self.rotate_speed = 5.0
 
 player = Player()
+
+# --- NPC Data ---
+class NPC:
+    def __init__(self, position, composition, z_offset, animation_params):
+        self.position = position
+        self.composition = composition
+        self.z_offset = z_offset
+        # --- NEW ---
+        # Store animation parameters for each NPC
+        self.animation_params = animation_params
+
+npcs = [] # A list to hold all the NPC objects in the world
+
+# --- NPC Part Pools ---
+# Each dictionary defines a blueprint for a body part.
+torso_pool = [
+    {'shape': 'cube', 'params': (60,), 'scale': (1.0, 1.5, 0.8)},
+    {'shape': 'sphere', 'params': (40, 20, 20), 'scale': (1.2, 1.0, 1.2)},
+]
+head_pool = [
+    {'shape': 'sphere', 'params': (20, 20, 20), 'position': (0, 65, 0)},
+    {'shape': 'cube', 'params': (30,), 'position': (0, 60, 0)},
+]
+legs_pool = [
+    {'shape': 'cube', 'params': (30,), 'scale': (0.6, 1.5, 0.6)},
+    {'shape': 'cone', 'params': (15, 60, 10, 5), 'scale': (1.0, 1.0, 1.0)},
+]
+
 
 
 # Camera-related variables
@@ -86,6 +120,108 @@ def draw_character_creation_screen():
         draw_text(400, y_offset, f"{prefix}{stat}: {player.stats[stat]}")
         y_offset -= 40
 
+def generate_and_spawn_npc():
+    """Generates a composite NPC from the pools and spawns it on the map."""
+    composition = []
+    # 1. Choose a torso and assign its color
+    torso = random.choice(torso_pool).copy()
+    torso['position'] = (0, 0, 0) # Torso is the center
+    torso['color'] = (random.random(), random.random(), random.random())
+    composition.append(torso)
+    
+    # 2. Choose a head and assign its color
+    head = random.choice(head_pool).copy()
+    head['color'] = (random.random(), random.random(), random.random())
+    composition.append(head)
+
+    # 3. Choose legs, assign a color, and create a left and right version
+    leg_blueprint = random.choice(legs_pool).copy()
+    leg_color = (random.random(), random.random(), random.random())
+    
+    # --- FIX ---
+    # The leg's Y position has been raised from -60 to -45 to connect with the torso.
+    leg_y_position = -45
+    
+    # --- Calculate height offset based on chosen legs ---
+    lowest_y_point = leg_y_position  # Base position of legs
+    leg_shape = leg_blueprint['shape']
+    if leg_shape == 'cube':
+        scaled_height = leg_blueprint['params'][0] * leg_blueprint['scale'][1]
+        lowest_y_point -= scaled_height / 2.0
+    elif leg_shape == 'cone':
+        scaled_height = leg_blueprint['params'][1] * leg_blueprint['scale'][1]
+        lowest_y_point -= scaled_height
+    
+    z_offset = abs(lowest_y_point) * 0.5
+    
+    left_leg = leg_blueprint.copy()
+    left_leg['position'] = (-20, leg_y_position, 0)
+    left_leg['color'] = leg_color
+    composition.append(left_leg)
+    
+    right_leg = leg_blueprint.copy()
+    right_leg['position'] = (20, leg_y_position, 0)
+    right_leg['color'] = leg_color # Both legs share the same color
+    composition.append(right_leg)
+    
+    # 4. Get a random position on the map
+    x = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
+    y = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
+    position = [x, y, 0]
+
+    # --- NEW: Generate and store unique animation parameters for this NPC ---
+    animation_params = {
+        'phase_offset': random.uniform(0, 2 * math.pi), # Random start point in the animation cycle
+        'scale_factor': random.uniform(0.05, 0.1), 
+        'scale_speed': random.uniform(2.0, 4.0)
+    }
+    
+    # 5. Create the NPC instance, passing the calculated offset
+    new_npc = NPC(position, composition, z_offset, animation_params)
+    npcs.append(new_npc)
+
+def draw_npc(npc):
+    """Draws a single composite NPC."""
+    glPushMatrix()
+    # Use the pre-calculated z_offset for this specific NPC
+    glTranslatef(npc.position[0], npc.position[1], npc.z_offset)
+
+    # --- NEW: Calculate and apply breathing animation scale ---
+    # Calculate animation scale based on total elapsed game time
+    phase_offset = npc.animation_params['phase_offset']
+    scale_factor = npc.animation_params['scale_factor']
+    scale_speed = npc.animation_params['scale_speed']
+    scale = 1.0 + scale_factor * math.sin(total_time * scale_speed + phase_offset)
+    
+    # Apply the animation scale on top of the base scale
+    glScalef(0.5 * scale, 0.5 * scale, 0.5 * scale)
+    
+    glRotatef(90, 1, 0, 0)
+
+    # Iterate through and draw each part of the NPC's body
+    for part in npc.composition:
+        glPushMatrix()
+        glColor3f(*part['color'])
+        
+        if 'position' in part:
+            glTranslatef(*part['position'])
+        if 'scale' in part:
+            glScalef(*part['scale'])
+
+        if part['shape'] == 'cube':
+            glutSolidCube(*part['params'])
+        elif part['shape'] == 'sphere':
+            glutSolidSphere(*part['params'])
+        elif part['shape'] == 'cone':
+            glPushMatrix()
+            glRotatef(90, 1, 0, 0)
+            gluCylinder(gluNewQuadric(), part['params'][0], 0, part['params'][1], part['params'][2], part['params'][3])
+            glPopMatrix()
+            
+        glPopMatrix()
+
+    glPopMatrix()
+
 def draw_player():
     """Draws a wizard-like player model using basic shapes."""
     glPushMatrix()
@@ -98,6 +234,10 @@ def draw_player():
     # Input rotation of the player to face the correct direction
     glRotatef(player.rotation_angle, 0, 0, 1)
     
+    # --- NEW ---
+    # Scale the entire player model down to 50% of its original size.
+    glScalef(0.5, 0.5, 0.5)
+
     # --- FIX ---
     # Rotate the entire model 90 degrees around the X-axis to make it stand up.
     # This aligns the model's 'up' (its local Y-axis) with the world's 'up' (the global Z-axis).
@@ -201,6 +341,8 @@ def keyboardListener(key, x, y):
     if game_state == "character_creation":
         if key == b'\r': # Enter key
             game_state = "playing"
+            for _ in range(5):
+                generate_and_spawn_npc()
 
     elif game_state == "playing":
         # --- FIX ---
@@ -314,11 +456,13 @@ def setupCamera():
 
 
 def idle():
-    """
-    Idle function that runs continuously:
-    - Triggers screen redraw for real-time updates.
-    """
-    # Ensure the screen updates with the latest changes
+    """Idle function that runs continuously and calculates delta time."""
+    global last_time, total_time
+    now = time.time()
+    delta_time = now - last_time
+    last_time = now
+    total_time += delta_time # Keep a running total of elapsed time
+    
     glutPostRedisplay()
 
 
@@ -416,6 +560,9 @@ def showScreen():
         
         # --- Draw the Player Model ---
         draw_player()
+
+        for npc in npcs: # Draw all the NPCs in the list
+            draw_npc(npc)
 
     # Swap buffers for smooth rendering (double buffering)
     glutSwapBuffers()
