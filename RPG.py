@@ -15,6 +15,12 @@ available_points = 5
 selected_stat_index = 0
 stat_keys = ["Strength", "Dexterity", "Intelligence"]
 
+# --- Dialogue and Interaction State ---
+collided_npc = None
+previous_camera_pos = None
+dialogue_options = []
+interaction_range = 75.0 # The radius within which the player can interact with an NPC
+
 # Player class to manage player stats and level
 class Player:
     def __init__(self):
@@ -42,13 +48,15 @@ player = Player()
 
 # --- NPC Data ---
 class NPC:
-    def __init__(self, position, composition, z_offset, animation_params):
+    def __init__(self, position, composition, z_offset, animation_params, is_rogue, has_quest):
         self.position = position
         self.composition = composition
         self.z_offset = z_offset
-        # --- NEW ---
-        # Store animation parameters for each NPC
         self.animation_params = animation_params
+        self.is_rogue = is_rogue
+        # A flag to determine if the NPC has a quest
+        self.has_quest = has_quest
+
 
 npcs = [] # A list to hold all the NPC objects in the world
 
@@ -66,7 +74,6 @@ legs_pool = [
     {'shape': 'cube', 'params': (30,), 'scale': (0.6, 1.5, 0.6)},
     {'shape': 'cone', 'params': (15, 60, 10, 5), 'scale': (1.0, 1.0, 1.0)},
 ]
-
 
 
 # Camera-related variables
@@ -120,6 +127,30 @@ def draw_character_creation_screen():
         draw_text(400, y_offset, f"{prefix}{stat}: {player.stats[stat]}")
         y_offset -= 40
 
+def draw_dialogue_screen():
+    """Draws the UI for the dialogue state."""
+    if not collided_npc:
+        return
+
+    # Draw a semi-transparent background for the dialogue box
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix(); glLoadIdentity()
+    gluOrtho2D(0, 1000, 0, 800)
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix(); glLoadIdentity()
+    
+    # Restore the previous projection matrix
+    glPopMatrix()
+    glMatrixMode(GL_PROJECTION)
+    glPopMatrix()
+    glMatrixMode(GL_MODELVIEW)
+
+    # Draw dialogue text and options
+    y_offset = 350
+    for i, option in enumerate(dialogue_options):
+        draw_text(100, y_offset, f"{i+1}. {option}")
+        y_offset -= 40
+    
 def generate_and_spawn_npc():
     """Generates a composite NPC from the pools and spawns it on the map."""
     composition = []
@@ -164,6 +195,15 @@ def generate_and_spawn_npc():
     right_leg['color'] = leg_color # Both legs share the same color
     composition.append(right_leg)
     
+    # Determine if NPC is rogue, but don't change its appearance
+    is_rogue = random.random() < 0.5
+
+    # --- NEW: Determine if a friendly NPC has a quest ---
+    has_quest = False
+    if not is_rogue and random.random() < 0.4: # 40% chance for a friendly NPC to have a quest
+        has_quest = True
+
+
     # 4. Get a random position on the map
     x = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
     y = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
@@ -177,26 +217,65 @@ def generate_and_spawn_npc():
     }
     
     # 5. Create the NPC instance, passing the calculated offset
-    new_npc = NPC(position, composition, z_offset, animation_params)
+    new_npc = NPC(position, composition, z_offset, animation_params, is_rogue, has_quest)
     npcs.append(new_npc)
 
-def draw_npc(npc):
+def draw_quest_indicator():
+    """Draws a yellow exclamation mark in the NPC's local space."""
+    glPushMatrix()
+    # Position it high above the NPC's head
+    glTranslatef(0, 110, 0) 
+    glColor3f(1.0, 0.0, 0.0) # Red
+
+    # Draw the main bar of the '!'
+    glPushMatrix()
+    glRotatef(-90, 1, 0, 0)
+    gluCylinder(gluNewQuadric(), 5, 5, 25, 10, 5)
+    glPopMatrix()
+
+    # Draw the dot of the '!'
+    glPushMatrix()
+    glTranslatef(0, -15, 0)
+    glutSolidSphere(6, 10, 10)
+    glPopMatrix()
+    
+    glPopMatrix()
+
+def draw_npc(npc, is_in_dialogue=False):
     """Draws a single composite NPC."""
     glPushMatrix()
-    # Use the pre-calculated z_offset for this specific NPC
-    glTranslatef(npc.position[0], npc.position[1], npc.z_offset)
 
-    # --- NEW: Calculate and apply breathing animation scale ---
-    # Calculate animation scale based on total elapsed game time
-    phase_offset = npc.animation_params['phase_offset']
-    scale_factor = npc.animation_params['scale_factor']
-    scale_speed = npc.animation_params['scale_speed']
-    scale = 1.0 + scale_factor * math.sin(total_time * scale_speed + phase_offset)
-    
-    # Apply the animation scale on top of the base scale
-    glScalef(0.5 * scale, 0.5 * scale, 0.5 * scale)
+    if is_in_dialogue:
+        glTranslatef(800, 200, 0)
+        glScalef(1.5, 1.5, 1.5)
+        glRotatef(-90, 0, 0, 1)
+    else:
+        # Use the pre-calculated z_offset for this specific NPC
+        glTranslatef(npc.position[0], npc.position[1], npc.z_offset)
+        
+        # --- NEW: Calculate and apply rotation to face the player ---
+        dx = player.position[0] - npc.position[0]
+        dy = player.position[1] - npc.position[1]
+        angle_to_player = math.degrees(math.atan2(dy, dx))
+        # Rotate around the Z-axis (world's up axis). Subtract 90 to align the model's front.
+        glRotatef(angle_to_player - 90, 0, 0, 1)
+
+        # --- NEW: Calculate and apply breathing animation scale ---
+        # Calculate animation scale based on total elapsed game time
+        phase_offset = npc.animation_params['phase_offset']
+        scale_factor = npc.animation_params['scale_factor']
+        scale_speed = npc.animation_params['scale_speed']
+        scale = 1.0 + scale_factor * math.sin(total_time * scale_speed + phase_offset)
+        
+        # Apply the animation scale on top of the base scale
+        glScalef(0.5 * scale, 0.5 * scale, 0.5 * scale)
     
     glRotatef(90, 1, 0, 0)
+
+    # --- NEW: Draw the quest indicator if the NPC has one ---
+    # This is drawn after scaling so it pulses with the NPC
+    if npc.has_quest and not is_in_dialogue:
+        draw_quest_indicator()
 
     # Iterate through and draw each part of the NPC's body
     for part in npc.composition:
@@ -221,6 +300,7 @@ def draw_npc(npc):
         glPopMatrix()
 
     glPopMatrix()
+
 
 def draw_player():
     """Draws a wizard-like player model using basic shapes."""
@@ -333,11 +413,22 @@ def draw_player():
 
     glPopMatrix() # End of player model matrix
 
+def get_nearest_npc():
+    """Finds the NPC closest to the player."""
+    closest_npc = None
+    min_dist = float('inf')
+    for npc in npcs:
+        dist = math.sqrt((player.position[0] - npc.position[0])**2 + (player.position[1] - npc.position[1])**2)
+        if dist < min_dist:
+            min_dist = dist
+            closest_npc = npc
+    return closest_npc, min_dist
+
 def keyboardListener(key, x, y):
     """
     Handles keyboard inputs for player movement, gun rotation, camera updates, and cheat mode toggles.
     """
-    global game_state, camera_pos, camera_angle
+    global game_state, camera_pos, camera_angle, collided_npc, previous_camera_pos, dialogue_options
     if game_state == "character_creation":
         if key == b'\r': # Enter key
             game_state = "playing"
@@ -372,12 +463,33 @@ def keyboardListener(key, x, y):
         # D to rotate right
         if key == b'd':
             player.rotation_angle -= player.rotate_speed
+        
+        if key == b'i':
+            npc_to_interact, dist = get_nearest_npc()
+            if npc_to_interact and dist <= interaction_range:
+                game_state = "dialogue"
+                collided_npc = npc_to_interact
+                previous_camera_pos = camera_pos
+                if npc_to_interact.is_rogue:
+                    dialogue_options = ["Attack", "Try to talk", "Exit"]
+                else:
+                    dialogue_options = ["Greet", "Ask for help", "Exit"]
+                return
 
         # Boundary check to keep the player within the walls
         bound = GRID_LENGTH - 40 # A small buffer from the wall edge
         if -bound <= new_pos_x <= bound and -bound <= new_pos_y <= bound:
             player.position[0] = new_pos_x
             player.position[1] = new_pos_y
+    
+    elif game_state == "dialogue":
+        if key == b'1':
+            print(f"You chose: {dialogue_options[0]}")
+        elif key == b'2':
+            print(f"You chose: {dialogue_options[1]}")
+        elif key == b'3':
+            game_state = "playing"
+            camera_pos = previous_camera_pos
 
 def specialKeyListener(key, x, y):
     """
@@ -440,19 +552,31 @@ def setupCamera():
     Configures the camera's projection and view settings.
     Uses a perspective projection and positions the camera to look at the target.
     """
+    global camera_pos
+
     glMatrixMode(GL_PROJECTION)  # Switch to projection matrix mode
     glLoadIdentity()  # Reset the projection matrix
-    # Set up a perspective projection (field of view, aspect ratio, near clip, far clip)
-    gluPerspective(fovY, 1.25, 0.1, 1500) # Think why aspect ration is 1.25?
+
+    if game_state == "dialogue" and collided_npc:
+        gluPerspective(30, 1.25, 0.1, 2000)
+    else:
+        gluPerspective(fovY, 1.25, 0.1, 2000)
+
     glMatrixMode(GL_MODELVIEW)  # Switch to model-view matrix mode
     glLoadIdentity()  # Reset the model-view matrix
 
     # Extract camera position and look-at target
     x, y, z = camera_pos
-    # Position the camera and set its orientation
-    gluLookAt(x, y, z,  # Camera position
-              0, 0, 0,  # Look-at target
-              0, 0, 1)  # Up vector (z-axis)
+    if game_state == "dialogue" and collided_npc:
+        # --- FIX: Pulled the camera back on the X-axis for a better view ---
+        gluLookAt(300, 200, 150,   # Camera is positioned further away
+                    800, 200, 0,    # Looking at the same NPC portrait area
+                    0, 0, 1)        # Up is Z
+    else:
+        # Position the camera and set its orientation
+        gluLookAt(x, y, z,  # Camera position
+                0, 0, 0,  # Look-at target
+                0, 0, 1)  # Up vector (z-axis)
 
 
 def idle():
@@ -478,6 +602,7 @@ def showScreen():
     glViewport(0, 0, 1000, 800)  # Set viewport size
 
     setupCamera()  # Configure camera perspective
+
 def showScreen():
     """
     Display function to render the game scene:
@@ -563,7 +688,15 @@ def showScreen():
 
         for npc in npcs: # Draw all the NPCs in the list
             draw_npc(npc)
-
+    
+    elif game_state == "dialogue":
+        setupCamera()
+        if collided_npc:
+            draw_npc(collided_npc, is_in_dialogue=True)
+        
+        glClear(GL_DEPTH_BUFFER_BIT)
+        draw_dialogue_screen()
+        
     # Swap buffers for smooth rendering (double buffering)
     glutSwapBuffers()
 
