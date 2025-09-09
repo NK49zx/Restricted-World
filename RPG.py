@@ -19,6 +19,7 @@ stat_keys = ["Strength", "Dexterity", "Intelligence"]
 collided_npc = None
 previous_camera_pos = None
 dialogue_options = []
+dialogue_text = "" # NEW: Stores the NPC's current dialogue line
 interaction_range = 75.0 # The radius within which the player can interact with an NPC
 
 # Player class to manage player stats and level
@@ -48,7 +49,7 @@ player = Player()
 
 # --- NPC Data ---
 class NPC:
-    def __init__(self, position, composition, z_offset, animation_params, is_rogue, has_quest):
+    def __init__(self, position, composition, z_offset, animation_params, is_rogue, has_quest, enemy_type=None):
         self.position = position
         self.composition = composition
         self.z_offset = z_offset
@@ -56,6 +57,9 @@ class NPC:
         self.is_rogue = is_rogue
         # A flag to determine if the NPC has a quest
         self.has_quest = has_quest
+        # NEW: Store the potential enemy type
+        self.enemy_type = enemy_type
+        self.stats = { "Health": 50, "Strength": 5 }
 
 
 npcs = [] # A list to hold all the NPC objects in the world
@@ -75,6 +79,39 @@ legs_pool = [
     {'shape': 'cone', 'params': (15, 60, 10, 5), 'scale': (1.0, 1.0, 1.0)},
 ]
 
+ENEMY_CATALOG = {
+    "Slime": {
+        "stats": {"Health": 30, "Strength": 3},
+        "dialogue": "Gloop... glorp... (It seems hostile!)",
+        "composition": [
+            # A slime is just a single, large sphere body.
+            {'shape': 'sphere', 'params': (50, 20, 20), 'scale': (1.2, 0.8, 1.2), 'color': (0.435, 0.635, 0.815), 'position': (0,0,-45)}
+        ]
+    },
+    "Goblin": {
+        "stats": {"Health": 50, "Strength": 6},
+        "dialogue": "You'll make a fine meal for my clan!",
+        "composition": [
+            # Goblins are short and blocky
+            {'shape': 'cube', 'params': (40,), 'scale': (1.0, 1.2, 1.0), 'color': (0.1, 0.5, 0.1), 'position': (0,0,0)}, # Torso
+            {'shape': 'sphere', 'params': (15, 20, 20), 'color': (0.2, 0.6, 0.2), 'position': (0, 45, 0)}, # Head
+            {'shape': 'cube', 'params': (20,), 'scale': (0.6, 1.8, 0.6), 'color': (0.1, 0.4, 0.1), 'position': (-15, -40, 0)}, # Left Leg
+            {'shape': 'cube', 'params': (20,), 'scale': (0.6, 1.8, 0.6), 'color': (0.1, 0.4, 0.1), 'position': (15, -40, 0)}, # Right Leg
+        ]
+    },
+    "Orc": {
+        "stats": {"Health": 80, "Strength": 10},
+        "dialogue": "RAAARGH! You interrupted my brooding!",
+        "composition": [
+            # Orcs are tall and very blocky
+            {'shape': 'cube', 'params': (60,), 'scale': (1.2, 1.6, 1.0), 'color': (0.4, 0.3, 0.1), 'position': (0,0,0)}, # Torso
+            {'shape': 'cube', 'params': (35,), 'color': (0.5, 0.4, 0.2), 'position': (0, 70, 0)}, # Head
+            {'shape': 'cube', 'params': (30,), 'scale': (0.8, 1.5, 0.8), 'color': (0.3, 0.2, 0.1), 'position': (-25, -65, 0)}, # Left Leg
+            {'shape': 'cube', 'params': (30,), 'scale': (0.8, 1.5, 0.8), 'color': (0.3, 0.2, 0.1), 'position': (25, -65, 0)}, # Right Leg
+        ]
+    }
+}
+
 
 # Camera-related variables
 camera_pos = (0,500,500)
@@ -84,7 +121,6 @@ final_x, final_y, final_z = camera_pos
 
 fovY = 120  # Field of view
 GRID_LENGTH = 600  # Length of grid lines
-rand_var = 423
 
 
 def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18):
@@ -132,26 +168,16 @@ def draw_dialogue_screen():
     if not collided_npc:
         return
 
-    # Draw a semi-transparent background for the dialogue box
-    glMatrixMode(GL_PROJECTION)
-    glPushMatrix(); glLoadIdentity()
-    gluOrtho2D(0, 1000, 0, 800)
-    glMatrixMode(GL_MODELVIEW)
-    glPushMatrix(); glLoadIdentity()
+    # SUGGESTION: Draw NPC dialogue text at the top left
+    draw_text(50, 750, dialogue_text)
     
-    # Restore the previous projection matrix
-    glPopMatrix()
-    glMatrixMode(GL_PROJECTION)
-    glPopMatrix()
-    glMatrixMode(GL_MODELVIEW)
-
-    # Draw dialogue text and options
-    y_offset = 350
+    # SUGGESTION: Draw player options at the bottom left
+    y_offset = 150
     for i, option in enumerate(dialogue_options):
-        draw_text(100, y_offset, f"{i+1}. {option}")
+        draw_text(50, y_offset, f"{i+1}. {option}")
         y_offset -= 40
     
-def generate_and_spawn_npc():
+def generate_and_spawn_npc(is_rogue):
     """Generates a composite NPC from the pools and spawns it on the map."""
     composition = []
     # 1. Choose a torso and assign its color
@@ -196,13 +222,14 @@ def generate_and_spawn_npc():
     composition.append(right_leg)
     
     # Determine if NPC is rogue, but don't change its appearance
-    is_rogue = random.random() < 0.5
-
-    # --- NEW: Determine if a friendly NPC has a quest ---
     has_quest = False
-    if not is_rogue and random.random() < 0.4: # 40% chance for a friendly NPC to have a quest
-        has_quest = True
+    enemy_type = None
 
+    if is_rogue:
+        # SUGGESTION: If the NPC is a rogue, pick a random enemy type from the catalog
+        enemy_type = random.choice(list(ENEMY_CATALOG.keys()))
+    elif random.random() < 0.4: # 40% chance for a friendly NPC to have a quest
+        has_quest = True
 
     # 4. Get a random position on the map
     x = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
@@ -217,7 +244,7 @@ def generate_and_spawn_npc():
     }
     
     # 5. Create the NPC instance, passing the calculated offset
-    new_npc = NPC(position, composition, z_offset, animation_params, is_rogue, has_quest)
+    new_npc = NPC(position, composition, z_offset, animation_params, is_rogue, has_quest, enemy_type)
     npcs.append(new_npc)
 
 def draw_quest_indicator():
@@ -245,30 +272,29 @@ def draw_npc(npc, is_in_dialogue=False):
     """Draws a single composite NPC."""
     glPushMatrix()
 
+    # SUGGESTION: Calculate the animation scale first, so it can be used in both states.
+    phase_offset = npc.animation_params['phase_offset']
+    scale_factor = npc.animation_params['scale_factor']
+    scale_speed = npc.animation_params['scale_speed']
+    breathing_scale = 1.0 + scale_factor * math.sin(total_time * scale_speed + phase_offset)
+
     if is_in_dialogue:
-        glTranslatef(800, 200, 0)
-        glScalef(1.5, 1.5, 1.5)
+        glTranslatef(800, 180, 0)
+        # SUGGESTION: Apply the breathing_scale to the dialogue portrait's base scale.
+        glScalef(1.2 * breathing_scale, 1.2 * breathing_scale, 1.2 * breathing_scale)
         glRotatef(-90, 0, 0, 1)
     else:
         # Use the pre-calculated z_offset for this specific NPC
         glTranslatef(npc.position[0], npc.position[1], npc.z_offset)
         
-        # --- NEW: Calculate and apply rotation to face the player ---
+        # Calculate and apply rotation to face the player
         dx = player.position[0] - npc.position[0]
         dy = player.position[1] - npc.position[1]
         angle_to_player = math.degrees(math.atan2(dy, dx))
-        # Rotate around the Z-axis (world's up axis). Subtract 90 to align the model's front.
         glRotatef(angle_to_player - 90, 0, 0, 1)
 
-        # --- NEW: Calculate and apply breathing animation scale ---
-        # Calculate animation scale based on total elapsed game time
-        phase_offset = npc.animation_params['phase_offset']
-        scale_factor = npc.animation_params['scale_factor']
-        scale_speed = npc.animation_params['scale_speed']
-        scale = 1.0 + scale_factor * math.sin(total_time * scale_speed + phase_offset)
-        
         # Apply the animation scale on top of the base scale
-        glScalef(0.5 * scale, 0.5 * scale, 0.5 * scale)
+        glScalef(0.5 * breathing_scale, 0.5 * breathing_scale, 0.5 * breathing_scale)
     
     glRotatef(90, 1, 0, 0)
 
@@ -428,12 +454,16 @@ def keyboardListener(key, x, y):
     """
     Handles keyboard inputs for player movement, gun rotation, camera updates, and cheat mode toggles.
     """
-    global game_state, camera_pos, camera_angle, collided_npc, previous_camera_pos, dialogue_options
+    global game_state, camera_pos, camera_angle, collided_npc, previous_camera_pos, dialogue_options, dialogue_text
     if game_state == "character_creation":
-        if key == b'\r': # Enter key
+        if key == b'\r':
             game_state = "playing"
-            for _ in range(5):
-                generate_and_spawn_npc()
+            total_npcs = 2 
+            num_rogues = total_npcs // 2
+            spawn_list = [True] * num_rogues + [False] * (total_npcs - num_rogues)
+            random.shuffle(spawn_list)
+            for is_rogue in spawn_list:
+                generate_and_spawn_npc(is_rogue)
 
     elif game_state == "playing":
         # --- FIX ---
@@ -470,10 +500,9 @@ def keyboardListener(key, x, y):
                 game_state = "dialogue"
                 collided_npc = npc_to_interact
                 previous_camera_pos = camera_pos
-                if npc_to_interact.is_rogue:
-                    dialogue_options = ["Attack", "Try to talk", "Exit"]
-                else:
-                    dialogue_options = ["Greet", "Ask for help", "Exit"]
+                # SUGGESTION: All interactions now start with the same neutral options
+                dialogue_text = "..."
+                dialogue_options = ["Who are you?", "Can you help me?", "Leave"]
                 return
 
         # Boundary check to keep the player within the walls
@@ -484,12 +513,37 @@ def keyboardListener(key, x, y):
     
     elif game_state == "dialogue":
         if key == b'1':
-            print(f"You chose: {dialogue_options[0]}")
+            if dialogue_options and dialogue_options[0] == "Attack!":
+                print("Combat initiated!") # Next step: Implement combat logic here
+            elif collided_npc.is_rogue:
+                enemy_blueprint = ENEMY_CATALOG[collided_npc.enemy_type]
+                collided_npc.composition = enemy_blueprint["composition"]
+                collided_npc.stats = enemy_blueprint["stats"]
+                dialogue_text = enemy_blueprint["dialogue"]
+                dialogue_options = ["Attack!", "Try to flee"] 
+            else:
+                dialogue_text = "Just a humble traveler, like you."
+
         elif key == b'2':
-            print(f"You chose: {dialogue_options[1]}")
-        elif key == b'3':
-            game_state = "playing"
-            camera_pos = previous_camera_pos
+            if len(dialogue_options) > 1 and dialogue_options[1] == "Try to flee":
+                game_state = "playing"
+            elif len(dialogue_options) > 1 and dialogue_options[1] == "Can you help me?":
+                buffable_stats = ["Strength", "Dexterity", "Intelligence"]
+                stat_to_change = random.choice(buffable_stats)
+                
+                if collided_npc.is_rogue:
+                    change_amount = -3
+                    player.stats[stat_to_change] += change_amount
+                    dialogue_text = f"....He HE....You feel a chill... ({stat_to_change} {change_amount})"
+                else:
+                    change_amount = 5
+                    player.stats[stat_to_change] += change_amount
+                    dialogue_text = f"I have no use of this, here take this.You feel stronger! ({stat_to_change} +{change_amount})"
+                    
+        elif key == b'3': 
+            if len(dialogue_options) > 2 and dialogue_options[2] == "Leave":
+                game_state = "playing"
+                camera_pos = previous_camera_pos
 
 def specialKeyListener(key, x, y):
     """
@@ -514,27 +568,6 @@ def specialKeyListener(key, x, y):
                 player.stats[stat_to_change] -= 1
                 available_points += 1
 
-    elif game_state == "playing":
-        if key == GLUT_KEY_UP:
-            final_z += 5
-            
-        if key == GLUT_KEY_DOWN:
-            final_z -= 5
-            
-        if key == GLUT_KEY_RIGHT:
-            camera_angle += 2
-            r = math.sqrt(final_x**2 + final_y**2)
-            final_x = r * math.cos(math.radians(camera_angle))
-            final_y = r * math.sin(math.radians(camera_angle))
-                
-        if key == GLUT_KEY_LEFT:
-            camera_angle -= 2
-            r = math.sqrt(final_x**2 + final_y**2)
-            final_x = r * math.cos(math.radians(camera_angle))
-            final_y = r * math.sin(math.radians(camera_angle))
-        
-        camera_pos = (final_x, final_y, final_z)
-
 
 def mouseListener(button, state, x, y):
     """
@@ -548,35 +581,47 @@ def mouseListener(button, state, x, y):
 
 
 def setupCamera():
-    """
-    Configures the camera's projection and view settings.
-    Uses a perspective projection and positions the camera to look at the target.
-    """
-    global camera_pos
-
-    glMatrixMode(GL_PROJECTION)  # Switch to projection matrix mode
-    glLoadIdentity()  # Reset the projection matrix
-
+    """Configures the camera's projection and view settings."""
+    glMatrixMode(GL_PROJECTION)
+    glLoadIdentity()
+    
     if game_state == "dialogue" and collided_npc:
         gluPerspective(30, 1.25, 0.1, 2000)
     else:
         gluPerspective(fovY, 1.25, 0.1, 2000)
-
-    glMatrixMode(GL_MODELVIEW)  # Switch to model-view matrix mode
-    glLoadIdentity()  # Reset the model-view matrix
-
-    # Extract camera position and look-at target
-    x, y, z = camera_pos
+        
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity()
+    
     if game_state == "dialogue" and collided_npc:
-        # --- FIX: Pulled the camera back on the X-axis for a better view ---
-        gluLookAt(300, 200, 150,   # Camera is positioned further away
-                    800, 200, 0,    # Looking at the same NPC portrait area
-                    0, 0, 1)        # Up is Z
+        gluLookAt(300, 200, 150, 
+                  800, 200, 0, 
+                  0, 0, 1)
     else:
-        # Position the camera and set its orientation
-        gluLookAt(x, y, z,  # Camera position
-                0, 0, 0,  # Look-at target
-                0, 0, 1)  # Up vector (z-axis)
+        # --- SUGGESTION: New Third-Person Camera Logic ---
+        camera_distance = 80.0  # How far behind the player the camera is
+        camera_height = 130.0     # How high above the player the camera is
+
+        # Calculate camera position based on player's rotation and position
+        angle_rad = math.radians(player.rotation_angle - 90)
+        
+        # Calculate the offset from the player
+        offset_x = -camera_distance * math.cos(angle_rad)
+        offset_y = -camera_distance * math.sin(angle_rad)
+
+        # Final camera position
+        cam_x = player.position[0] + offset_x
+        cam_y = player.position[1] + offset_y
+        cam_z = player.position[2] + camera_height 
+
+        # The point the camera looks at (player's head/torso area)
+        look_at_x = player.position[0]
+        look_at_y = player.position[1]
+        look_at_z = player.position[2] + 40.0 # Look slightly above the player's feet
+
+        gluLookAt(cam_x, cam_y, cam_z,
+                  look_at_x, look_at_y, look_at_z,
+                  0, 0, 1) # World's up vector is Z
 
 
 def idle():
@@ -589,19 +634,6 @@ def idle():
     
     glutPostRedisplay()
 
-
-def showScreen():
-    """
-    Display function to render the game scene:
-    - Clears the screen and sets up the camera.
-    - Draws everything of the screen
-    """
-    # Clear color and depth buffers
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-    glLoadIdentity()  # Reset modelview matrix
-    glViewport(0, 0, 1000, 800)  # Set viewport size
-
-    setupCamera()  # Configure camera perspective
 
 def showScreen():
     """
@@ -708,7 +740,7 @@ def main():
     glutInitWindowSize(1000, 800)  # Window size
     glutInitWindowPosition(0, 0)  # Window position
     wind = glutCreateWindow(b"3D OpenGL Intro")  # Create the window
-
+    glEnable(GL_DEPTH_TEST)  # Enable depth testing for 3D
     glutDisplayFunc(showScreen)  # Register display function
     glutKeyboardFunc(keyboardListener)  # Register keyboard listener
     glutSpecialFunc(specialKeyListener)
