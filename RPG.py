@@ -10,25 +10,30 @@ last_time = time.time()
 total_time = 0.0
 
 # --- Game State and Player Stats ---
-game_state = "character_creation" # Can be "character_creation" or "playing"
+game_state = "character_creation" 
 creation_step = "stats"
 available_points = 5
 selected_stat_index = 0
 stat_keys = ["Strength", "Dexterity", "Intelligence"]
-god_mode = False # NEW: Cheat mode flag
+god_mode = False # Cheat mode flag
+
+DEMONIC_GIBBERISH = [
+    "Klatu... Verata... N... *cough*",
+    "Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn.",
+    "Iä! Iä! Yog-Sothoth!",
+    "(The air grows cold and a low growl reverberates in your skull.)"
+]
 
 # --- Visual Effects Management ---
 vfx_timers = {} # Holds timers for temporary effects like attack flashes
 
-# --- Spooky Background Data ---
-star_positions = []
 
 # --- Dialogue and Interaction State ---
 collided_npc = None
 previous_camera_pos = None
 dialogue_options = []
 combat_log = [] # Stores messages during a fight
-dialogue_text = "" # NEW: Stores the NPC's current dialogue line
+dialogue_text = "" # Stores the NPC's current dialogue line
 interaction_range = 75.0 # The radius within which the player can interact with an NPC
 combat_menu_state = "main"
 
@@ -72,7 +77,6 @@ class BossDoor:
         if self.state == 'revealed':
             self.state = 'opening'
             self.key_present = False
-            # --- FIX ---
             # Add both the boss room AND the doorway connector to the walkable areas
             WALKABLE_RECTS.append(BOSS_ROOM_BOUNDS)
             WALKABLE_RECTS.append(BOSS_DOORWAY_RECT)
@@ -199,16 +203,16 @@ BOSS_DOORWAY_RECT = (
 WALKABLE_RECTS = [
     # Central Hall
     (-CENTRAL_HALL_WIDTH + PLAYER_COLLISION_BUFFER, CENTRAL_HALL_WIDTH - PLAYER_COLLISION_BUFFER, -1200 + PLAYER_COLLISION_BUFFER, 1200 - PLAYER_COLLISION_BUFFER),
-    # Wings (unpack the list of tuples)
+    # Wings
     *WING_BOUNDS,
-    # Boss Room (for future use)
+    # Boss Room
     BOSS_ROOM_BOUNDS,
     # Doorway connectors to bridge the gap
     *DOORWAY_RECTS
 ]
 
 
-# A new helper function for player collision
+# A helper function for player collision
 def is_valid_position(x, y):
     """Checks if the player's target position is within a walkable area."""
     for rect in WALKABLE_RECTS:
@@ -237,16 +241,13 @@ class Player:
         self.level = 1
         self.xp = 0
         self.xp_to_next_level = 100
-        self.position = [0, 0, 0] # Use a list for mutable position
-        self.rotation_angle = 0.0 # Player's facing direction in degrees
+        self.position = [0, 0, 0] 
+        self.rotation_angle = 0.0 
         self.speed = 10.0
         self.rotate_speed = 5.0
-        # --- NEW: Quest Log ---
         self.main_quests = ["Get out of this world"]
-        # --- NEW: Player's chosen weapon ---
         self.weapon = "Sword" # Default weapon
         self.weapon_options = ["Sword", "Magic Staff"]
-        # Attributes to track status effects
         self.protection_turns = 0
         self.buff_turns = 0
         self.reflect_turns = 0
@@ -266,12 +267,9 @@ class NPC:
         self.z_offset = z_offset
         self.animation_params = animation_params
         self.is_rogue = is_rogue
-        # A flag to determine if the NPC has a quest
         self.has_quest = has_quest
-        # NEW: Store the potential enemy type
         self.enemy_type = enemy_type
         self.stats = { "Health": 50, "Strength": 5 }
-        # --- NEW: Variables to track one-time interactions ---
         self.has_given_quest = False
         self.has_given_help = False
         self.xp_awarded = False
@@ -281,7 +279,7 @@ class NPC:
 npcs = [] # A list to hold all the NPC objects in the world
 
 # --- NPC Part Pools ---
-# Each dictionary defines a blueprint for a body part.
+# Blueprint for a body part.
 torso_pool = [
     {'shape': 'cube', 'params': (60,), 'scale': (1.0, 1.5, 0.8)},
     {'shape': 'sphere', 'params': (40, 20, 20), 'scale': (1.2, 1.0, 1.2)},
@@ -345,6 +343,8 @@ ENEMY_CATALOG = {
     }
 }
 
+# List of standard enemies, excluding the boss
+STANDARD_ENEMIES = [enemy for enemy in ENEMY_CATALOG if enemy != "Archdemon"]
 
 # Camera-related variables
 camera_pos = (0,500,500)
@@ -354,6 +354,56 @@ final_x, final_y, final_z = camera_pos
 
 fovY = 120  # Field of view
 
+def reset_game():
+    """Resets all game variables to their initial state for a new game."""
+    global player, npcs, dropped_items, boss_door, game_state, creation_step, available_points, selected_stat_index, combat_log
+    
+    # Reset player and game objects
+    player = Player()
+    npcs.clear()
+    dropped_items.clear()
+    boss_door = BossDoor(0, 1200)
+    combat_log.clear()
+    
+    # Reset character creation and game state
+    available_points = 5
+    selected_stat_index = 0
+    creation_step = "stats"
+    game_state = "character_creation"
+    
+    print("Game has been reset.")
+
+def draw_game_over_screen():
+    """Draws the game over screen."""
+    draw_spooky_background()
+    glClear(GL_DEPTH_BUFFER_BIT)
+    draw_text(420, 500, "GAME OVER", GLUT_BITMAP_TIMES_ROMAN_24)
+    draw_text(380, 400, "Your journey ends here...")
+    draw_text(370, 200, "Press ENTER to Restart")
+
+def draw_victory_background():
+    """Draws a triumphant background for the victory screen."""
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+    gluOrtho2D(0, 1000, 0, 800)
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+    
+    # Gold gradient background
+    glBegin(GL_QUADS)
+    glColor3f(0.1, 0.1, 0.1) # Dark grey 
+    glVertex2f(0, 0); glVertex2f(1000, 0)
+    glColor3f(0.9, 0.7, 0.1) # Bright gold
+    glVertex2f(1000, 800); glVertex2f(0, 800)
+    glEnd()
+
+    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
+
+def draw_victory_screen():
+    """Draws the victory screen."""
+    draw_victory_background()
+    glClear(GL_DEPTH_BUFFER_BIT)
+    draw_text(430, 500, "VICTORY", GLUT_BITMAP_TIMES_ROMAN_24)
+    draw_text(320, 400, "You have escaped the Restricted World.")
+    draw_text(370, 200, "Press ENTER to Play Again")
 
 def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18):
     glColor3f(1,1,1)
@@ -388,16 +438,12 @@ def draw_spooky_background():
     
     # Dark gradient background
     glBegin(GL_QUADS)
-    glColor3f(0.0, 0.0, 0.0) # Black at the bottom
+    glColor3f(0.0, 0.0, 0.0) # Black 
     glVertex2f(0, 0); glVertex2f(1000, 0)
-    glColor3f(0.8, 0.1, 0.1) # Dark purple at the top
+    glColor3f(0.8, 0.1, 0.1) # Dark purple 
     glVertex2f(1000, 800); glVertex2f(0, 800)
     glEnd()
 
-    
-    #x = random.uniform(-700, 700)
-    #glColor3f(1,1,1) # Red moon
-    #glPushMatrix(); glTranslatef(x, 650, -60); glutSolidSphere(80, 20, 20); glPopMatrix()
 
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
 
@@ -426,7 +472,6 @@ def draw_quests():
         draw_text(750, y_offset, f"- {quest}")
         y_offset -= 30
 
-
 def draw_combat_screen():
     """Draws the UI for the combat state."""
     if not collided_npc: return
@@ -444,10 +489,10 @@ def draw_dialogue_screen():
     if not collided_npc:
         return
 
-    # SUGGESTION: Draw NPC dialogue text at the top left
+    # NPC dialogue at the top left
     draw_text(50, 750, dialogue_text)
     
-    # SUGGESTION: Draw player options at the bottom left
+    # player options at the bottom left
     y_offset = 150
     for i, option in enumerate(dialogue_options):
         draw_text(50, y_offset, f"{i+1}. {option}")
@@ -456,23 +501,22 @@ def draw_dialogue_screen():
 def generate_and_spawn_npc(is_rogue, wing_bounds):
     """Generates a composite NPC from the pools and spawns it on the map."""
     composition = []
-    # 1. Choose a torso and assign its color
+    # Choose a torso and assign its color
     torso = random.choice(torso_pool).copy()
     torso['position'] = (0, 0, 0) # Torso is the center
     torso['color'] = (random.random(), random.random(), random.random())
     composition.append(torso)
     
-    # 2. Choose a head and assign its color
+    # Choose a head and assign its color
     head = random.choice(head_pool).copy()
     head['color'] = (random.random(), random.random(), random.random())
     composition.append(head)
 
-    # 3. Choose legs, assign a color, and create a left and right version
+    # Choose legs, assign a color, and create a left and right version
     leg_blueprint = random.choice(legs_pool).copy()
     leg_color = (random.random(), random.random(), random.random())
     
-    # --- FIX ---
-    # The leg's Y position has been raised from -60 to -45 to connect with the torso.
+    # Raised the leg's Y position to connect with the torso.
     leg_y_position = -45
     
     # --- Calculate height offset based on chosen legs ---
@@ -494,33 +538,33 @@ def generate_and_spawn_npc(is_rogue, wing_bounds):
     
     right_leg = leg_blueprint.copy()
     right_leg['position'] = (20, leg_y_position, 0)
-    right_leg['color'] = leg_color # Both legs share the same color
+    right_leg['color'] = leg_color
     composition.append(right_leg)
     
-    # Determine if NPC is rogue, but don't change its appearance
+    # Determine if NPC is rogue
     has_quest = False
-    enemy_type = None
+    enemy_type = None #NOT USED
 
     if is_rogue:
-        # SUGGESTION: If the NPC is a rogue, pick a random enemy type from the catalog
-        enemy_type = random.choice(list(ENEMY_CATALOG.keys()))
-    elif random.random() < 0.4: # 40% chance for a friendly NPC to have a quest
-        has_quest = True
+        # If the NPC is a rogue, pick a random enemy type from the catalog
+        enemy_type = random.choice(STANDARD_ENEMIES)
+    elif random.random() < 0.4: 
+        has_quest = True #NOT USED
 
-    # 4. Get a random position within the specified wing
+    # Get a random position within the specified wing
     x_min, x_max, y_min, y_max = wing_bounds
     x = random.uniform(x_min + 50, x_max - 50)
     y = random.uniform(y_min + 50, y_max - 50)
     position = [x, y, 0]
 
-    # --- NEW: Generate and store unique animation parameters for this NPC ---
+    # Generate and store unique animation parameters for this NPC ---
     animation_params = {
         'phase_offset': random.uniform(0, 2 * math.pi), # Random start point in the animation cycle
         'scale_factor': random.uniform(0.05, 0.1), 
         'scale_speed': random.uniform(2.0, 4.0)
     }
     
-    # 5. Create the NPC instance, passing the calculated offset
+    # Create the NPC instance, passing the calculated offset
     new_npc = NPC(position, composition, z_offset, animation_params, is_rogue, has_quest, enemy_type)
     npcs.append(new_npc)
 
@@ -532,7 +576,7 @@ def draw_dropped_item(item):
     bob_height = 10 * (1 + math.sin(total_time * 2))
     glTranslatef(item.position[0], item.position[1], 10 + bob_height)
     glScalef(0.3, 0.3, 0.3)
-    glRotatef(total_time * 50, 0, 0, 1) # Gently rotate
+    glRotatef(total_time * 50, 0, 0, 1)
     glRotatef(90, 1, 0, 0)
     
     if item.item_type == 'loot':
@@ -542,18 +586,20 @@ def draw_dropped_item(item):
         glTranslatef(0, 0, 15)
         glColor3f(0.8, 0.8, 0.2) # Gold tie
         glutSolidCube(15)
+    
     elif item.item_type == 'xp':
         # Model for an XP Orb
         glColor3f(0.2, 0.5, 1.0) # Bright Blue
         glutSolidSphere(25, 15, 15)
-        # Add a little glow/pulse effect
+        # glow effect
         pulse_scale = 1.0 + 0.1 * math.sin(total_time * 4)
         glScalef(pulse_scale, pulse_scale, pulse_scale)
-        glColor4f(0.5, 0.8, 1.0, 0.5) # Translucent outer shell for glow
+        glColor4f(0.5, 0.8, 1.0, 0.5)
         glutSolidSphere(28, 15, 15)
 
     glPopMatrix()
-# --- NEW: Weapon Drawing Functions ---
+
+# --- Weapon Drawing Functions ---
 def draw_sword(override_color=None):
     glPushMatrix()
     glColor3f(*(override_color if override_color else (0.7, 0.7, 0.8))); glPushMatrix(); glScalef(0.2, 1.5, 0.1); glutSolidCube(50); glPopMatrix()
@@ -572,7 +618,7 @@ def draw_npc(npc, is_in_dialogue=False, override_color=None):
     """Draws a single composite NPC."""
     glPushMatrix()
 
-    # SUGGESTION: Calculate the animation scale first, so it can be used in both states.
+    # Calculate the animation scale first, so it can be used in both states.
     phase_offset = npc.animation_params['phase_offset']
     scale_factor = npc.animation_params['scale_factor']
     scale_speed = npc.animation_params['scale_speed']
@@ -580,25 +626,24 @@ def draw_npc(npc, is_in_dialogue=False, override_color=None):
 
     if is_in_dialogue:
         glTranslatef(800, 180, 0)
-        # SUGGESTION: Apply the breathing_scale to the dialogue portrait's base scale.
+        # Applied the breathing_scale
         glScalef(1.2 * breathing_scale, 1.2 * breathing_scale, 1.2 * breathing_scale)
         glRotatef(-90, 0, 0, 1)
     else:
-        # Use the pre-calculated z_offset for this specific NPC
+        # Used the pre-calculated z_offset
         glTranslatef(npc.position[0], npc.position[1], npc.z_offset)
         
-        # Calculate and apply rotation to face the player
+        # Applied rotation to face the player
         dx = player.position[0] - npc.position[0]
         dy = player.position[1] - npc.position[1]
         angle_to_player = math.degrees(math.atan2(dy, dx))
         glRotatef(angle_to_player - 90, 0, 0, 1)
-
-        # Apply the animation scale on top of the base scale
+        # Applied the breathing_scale
         glScalef(0.5 * breathing_scale, 0.5 * breathing_scale, 0.5 * breathing_scale)
     
     glRotatef(90, 1, 0, 0)
 
-    # Iterate through and draw each part of the NPC's body
+    # Iterate and draw each part of the NPC's body
     for part in npc.composition:
         glPushMatrix()
         glColor3f(*(override_color if override_color else part['color']))
@@ -624,12 +669,12 @@ def draw_npc(npc, is_in_dialogue=False, override_color=None):
 def draw_player_hand_and_weapon(override_color=None):
     """Draws a first-person view of the player's weapon on the right."""
     glPushMatrix()
-    # Positioned on the right side of the screen, adjusted for a better view
+    # Positioned on the right side of the screen
     glTranslatef(700, 110, 10)
     
     # Weapon
     glPushMatrix()
-    # Scale the weapon to be more prominent in the first-person view
+    # Scale the weapon
     glScalef(1.2, 1.2, 1.2)
     glRotatef(110, 1, 0, 0)
     if player.weapon == "Sword":
@@ -644,36 +689,26 @@ def draw_player():
     """Draws a wizard-like player model using basic shapes."""
     glPushMatrix()
     
-    # Position the entire player model in the world.
-    # The floor is at z=0. The robe's height is 75, and it's drawn around the origin.
-    # We lift the model by half the robe's height (37.5) on the Z-axis to make it sit on the floor.
     glTranslatef(player.position[0], player.position[1], 37.5)
 
-    # Input rotation of the player to face the correct direction
     glRotatef(player.rotation_angle, 0, 0, 1)
     
-    # --- NEW ---
-    # Scale the entire player model down to 50% of its original size.
     glScalef(0.5, 0.5, 0.5)
 
-    # --- FIX ---
-    # Rotate the entire model 90 degrees around the X-axis to make it stand up.
-    # This aligns the model's 'up' (its local Y-axis) with the world's 'up' (the global Z-axis).
     glRotatef(90, 1, 0, 0)
 
     # --- Draw Wizard Robe (Body) ---
-    # Using a stretched cube for the robe
     glColor3f(0.3, 0.2, 0.8) # Dark purple
     glPushMatrix()
-    glScalef(1, 1.5, 0.7) # Stretch the cube to be taller than it is wide
+    glScalef(1, 1.5, 0.7)
     glutSolidCube(50)
     glPopMatrix()
 
     # --- Draw Head ---
     glColor3f(0.9, 0.7, 0.6) # A skin-like color
     glPushMatrix()
-    glTranslatef(0, 55, 0) # Position head on top of the body
-    glutSolidSphere(20, 20, 20) # Radius, slices, stacks
+    glTranslatef(0, 55, 0) 
+    glutSolidSphere(20, 20, 20) 
     glPopMatrix()
 
     # --- Draw Wizard Hat ---
@@ -681,8 +716,7 @@ def draw_player():
     glPushMatrix()
     glTranslatef(0, 65, 0) # Position hat on top of the head
     glRotatef(-90, 1, 0, 0) # Rotate the cone to point upwards
-    # gluCylinder uses (quadric, base_radius, top_radius, height, slices, stacks)
-    # For a cone, top_radius is 0.
+
     gluCylinder(gluNewQuadric(), 30, 0, 60, 20, 20)
     glPopMatrix()
     
@@ -693,11 +727,12 @@ def draw_player():
     glPushMatrix(); glTranslatef(-45, 20, 15); glScalef(0.4, 0.4, 1.0); glutSolidCube(30); glPopMatrix()
     glPushMatrix(); glColor3f(0.9, 0.7, 0.6); glTranslatef(-45, 20, 35); glutSolidSphere(8, 10, 10); glPopMatrix()
     glPopMatrix()
-    # FIX: left arm and weapon rendering logic updated for correct positioning.
+
     glPushMatrix(); glColor3f(0.3, 0.2, 0.8) # LEft
     glPushMatrix(); glTranslatef(35, 20, 0); glScalef(1.0, 0.4, 0.4); glutSolidCube(30); glPopMatrix() # Upper
     glPushMatrix(); glTranslatef(45, 20, 15); glScalef(0.4, 0.4, 1.0); glutSolidCube(30); glPopMatrix() # Lower
     glPushMatrix(); glColor3f(0.9, 0.7, 0.6); glTranslatef(45, 20, 35); glutSolidSphere(8, 10, 10); glPopMatrix() # Fist
+    
     # Weapon
     glPushMatrix()
     glTranslatef(-45, 20, 35)
@@ -710,29 +745,29 @@ def draw_player():
     glPopMatrix()
 
     # --- Draw Legs ---
-    glColor3f(0.2, 0.2, 0.2) # Dark grey for trousers/boots
+    glColor3f(0.2, 0.2, 0.2) # Dark grey
     # Left Leg
     glPushMatrix()
-    glTranslatef(-15, -45, 0) # Position to the left and below the body
-    glScalef(0.6, 1.2, 0.6) # Make it look like a leg
+    glTranslatef(-15, -45, 0) 
+    glScalef(0.6, 1.2, 0.6) 
     glutSolidCube(30)
     glPopMatrix()
 
     # Right Leg
     glPushMatrix()
-    glTranslatef(15, -45, 0) # Position to the right and below the body
-    glScalef(0.6, 1.2, 0.6) # Make it look like a leg
+    glTranslatef(15, -45, 0)
+    glScalef(0.6, 1.2, 0.6) 
     glutSolidCube(30)
     glPopMatrix()
 
-    glPopMatrix() # End of player model matrix
+    glPopMatrix() 
 
 def spawn_boss():
     """Creates and spawns the final boss."""
     boss_template = ENEMY_CATALOG["Archdemon"]
     
-    # Position the boss just inside the boss room, facing the door
-    position = [0, 1350, 0] 
+    # Position the boss in the oblivion
+    position = [0, 1500, 0] 
     
     animation_params = {
         'phase_offset': 0, 
@@ -740,8 +775,6 @@ def spawn_boss():
         'scale_speed': 1.0
     }
     
-    # Calculate the z_offset to stand on the floor
-    # This is a simplified calculation for the boss's specific leg shape
     z_offset = (40 * 1.8) / 2 
     
     boss_npc = NPC(
@@ -749,7 +782,7 @@ def spawn_boss():
         boss_template["composition"], 
         z_offset, 
         animation_params, 
-        is_rogue=True,  # The boss is definitely a rogue!
+        is_rogue=True, 
         has_quest=False, 
         enemy_type="Archdemon"
     )
@@ -789,7 +822,7 @@ def check_item_collision():
         if dist < player.collision_radius + boss_door.key.collision_radius:
             print("You found the key! The grand door is opening...")
             boss_door.open()
-            return # Prioritize the key over other items
+            return
         
     for item in dropped_items[:]: # Iterate over a copy
         dist = math.sqrt((player.position[0] - item.position[0])**2 + (player.position[1] - item.position[1])**2)
@@ -797,7 +830,7 @@ def check_item_collision():
             if item.item_type == 'loot':
                 item_found = random.choice(["Healing Potion", "Mana Potion", "Mysterious Potion"])
                 player.inventory[item_found] += 1
-                print(f"You picked up a {item_found}!") # Using print as a temporary notification
+                print(f"You picked up a {item_found}!") #
             elif item.item_type == 'xp':
                 player.xp += item.value
                 print(f"You absorbed an XP orb! +{item.value} XP!")
@@ -806,8 +839,8 @@ def check_item_collision():
 
 def initialize_pickups():
     """Spawns loot and XP items across the manor wings."""
-    num_items = 7 # Total items to spawn
-    for _ in range(num_items):
+    num_items = 7 # No. of items to spawn
+    for i in range(num_items):
         # Choose a random wing
         wing_bounds = random.choice(WING_BOUNDS)
         x_min, x_max, y_min, y_max = wing_bounds
@@ -839,6 +872,7 @@ def keyboardListener(key, x, y):
             if creation_step == "stats":
                 creation_step = "weapon"
             else:
+                # Spwan NPCS and start game
                 game_state = "playing"
                 total_npcs, num_rogues = 6, 3
                 spawn_list = [True] * num_rogues + [False] * (total_npcs - num_rogues)
@@ -846,12 +880,17 @@ def keyboardListener(key, x, y):
                 for i, is_rogue in enumerate(spawn_list): 
                     generate_and_spawn_npc(is_rogue, WING_BOUNDS[i])
                 initialize_pickups()
+    
+    elif game_state == "game_over":
+        if key == b'\r': 
+            reset_game()
+    
+    elif game_state == "victory":
+        if key == b'\r': 
+            reset_game()
 
-    elif game_state == "playing":
-        # --- FIX ---
-        # The movement calculation must use the same angle as the visual rotation
-        # in draw_player(), which includes the -90 degree offset. This ensures
-        # "forward" is always in the direction the player model is facing.
+    elif game_state == "playing": # Normal gameplay state
+        # Player movement and rotation
         angle_rad = math.radians(player.rotation_angle-90)
         move_x = math.cos(angle_rad)
         move_y = math.sin(angle_rad)
@@ -876,6 +915,7 @@ def keyboardListener(key, x, y):
         if key == b'd':
             player.rotation_angle -= player.rotate_speed
         
+        # C to toggle god mode
         if key == b'c':
             global god_mode
             god_mode = not god_mode
@@ -885,6 +925,7 @@ def keyboardListener(key, x, y):
                 print("God Mode Deactivated!")
             return
         
+        # I to interact with nearest NPC
         if key == b'i':
             npc_to_interact, dist = get_nearest_npc()
             if npc_to_interact and dist <= interaction_range:
@@ -903,29 +944,51 @@ def keyboardListener(key, x, y):
             player.position[0] = new_pos_x
             player.position[1] = new_pos_y
         
+        # Check for collisions with items
         check_item_collision()
-    elif game_state == "dialogue":
-        if key == b'1':
+    
+    elif game_state == "dialogue": # Dialogue state with NPC
+
+        if collided_npc and collided_npc.enemy_type == "Archdemon":
+            if key == b'1': # "Who are you?"
+                dialogue_text = ENEMY_CATALOG["Archdemon"]["dialogue"]
+                game_state = "combat"
+            elif key in [b'2', b'3', b'4']: # Any other option
+                dialogue_text = random.choice(DEMONIC_GIBBERISH)
+            
+            if game_state != "combat":
+                dialogue_options = ["Who are you?", "How to get out of this place?", "Can you help me?", "Leave"]
+            else:
+                combat_log = [random.choice(DEMONIC_GIBBERISH)]
+                dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]
+            
+            return
+        
+        # Handle dialogue options based on key presses
+        if key == b'1': # Who are you? OR Attack
             if dialogue_options and dialogue_options[0] == "Who are you?":
                 if collided_npc.is_rogue:
                     enemy_blueprint = ENEMY_CATALOG[collided_npc.enemy_type]
                     collided_npc.composition, collided_npc.stats, dialogue_text = enemy_blueprint["composition"], enemy_blueprint["stats"].copy(), enemy_blueprint["dialogue"]
                     collided_npc.is_revealed = True
-                    game_state = "combat"; combat_log = [f"A {collided_npc.enemy_type} appears!"]; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"] 
+                    game_state = "combat"; combat_log = [f"A {collided_npc.enemy_type} appears!"]
+                    dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"] 
                 else: 
                     dialogue_text = "Just a humble traveler, like you."
+            
             elif dialogue_options and dialogue_options[0] == "Attack":
                 player_damage = player.stats["Strength"] + random.randint(1, 6)
                 collided_npc.stats["Health"] -= player_damage
                 combat_log.append(f"You hit for {player_damage} damage.")
                 if collided_npc.stats["Health"] <= 0:
-                    player.xp += 50; print(f"You defeated the {collided_npc.enemy_type}! +50 XP"); npcs.remove(collided_npc); game_state = "playing"; return
+                    player.xp += 50; print(f"You defeated the {collided_npc.enemy_type}! +50 XP"); npcs.remove(collided_npc); game_state = "playing"
+                    return
                 enemy_damage = collided_npc.stats["Strength"] + random.randint(1, 3)
                 player.stats["Health"] -= enemy_damage
                 combat_log.append(f"Enemy hits for {enemy_damage} damage.")
                 if player.stats["Health"] <= 0: combat_log.append("You have been defeated!"); game_state = "playing"
         
-        elif key == b'2': # How to get out of this place? OR Try to flee
+        elif key == b'2': # How to get out of this place?
             if len(dialogue_options) > 1 and dialogue_options[1] == "Try to flee":
                 game_state = "playing"
             elif len(dialogue_options) > 1 and dialogue_options[1] == "How to get out of this place?":
@@ -936,7 +999,6 @@ def keyboardListener(key, x, y):
                 else:
                     collided_npc.has_given_quest = True
                     rogue_npcs = [npc for npc in npcs if npc.is_rogue]
-                    # FIX: Restore the full quest hint logic
                     quest_hints = [ "You must find the hidden door.", "A key is needed to unlock the way." ]
                     if rogue_npcs:
                         quest_target_npc = random.choice(rogue_npcs)
@@ -946,11 +1008,16 @@ def keyboardListener(key, x, y):
                     quest_hint_text = random.choice(quest_hints)
                     dialogue_text = f"They whisper, '{quest_hint_text}'"
                     quest_objective = ""
-                    if "door" in quest_hint_text: quest_objective = "Find the hidden door"
-                    elif "key" in quest_hint_text: quest_objective = "Find the key"
-                    else: quest_objective = f"Defeat the {enemy_to_kill}"
+                    
+                    if "door" in quest_hint_text: 
+                        quest_objective = "Find the hidden door"
+                    elif "key" in quest_hint_text: 
+                        quest_objective = "Find the key"
+                    else: 
+                        quest_objective = f"Defeat the {enemy_to_kill}"
                     if quest_objective not in player.main_quests:
                         player.main_quests.append(quest_objective)
+            
             elif len(dialogue_options) > 1 and dialogue_options[1] == "Use Item":
                 combat_log.append("You have no items!")
 
@@ -994,7 +1061,7 @@ def keyboardListener(key, x, y):
         if combat_menu_state == "main":
             if key == b'1': # Attack
                 vfx_timers['attack_flash'] = 0.2
-                if god_mode:
+                if god_mode and collided_npc.enemy_type != "Archdemon":
                     player_damage = 9999 # Insta-kill damage
                 elif player.weapon == "Sword": player_damage = player.stats["Strength"] + random.randint(1, 6)
                 else: player_damage = player.stats["Intelligence"] + random.randint(1, 4)
@@ -1006,6 +1073,9 @@ def keyboardListener(key, x, y):
                 
                 # Check for enemy defeat immediately after the attack.(GOD MODE)
                 if collided_npc.stats["Health"] <= 0:
+                    if collided_npc.enemy_type == "Archdemon":
+                        game_state = "victory"
+                        return
                     player.xp += 50
                     combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP")
                     if collided_npc.is_rogue:
@@ -1034,8 +1104,14 @@ def keyboardListener(key, x, y):
                 dialogue_options = [f"{item} (x{count})" for item, count in player.inventory.items() if count > 0]
                 dialogue_options.append("Back")
             elif key == b'4': # Flee
-                if random.random() < 0.5: combat_log.append("You fled successfully!"); game_state = "playing"
-                else: combat_log.append("You failed to flee!"); enemy_turn()
+                if collided_npc and collided_npc.enemy_type == "Archdemon":
+                    combat_log.append("There is no escape!")
+                    enemy_turn() # The demon attacks as punishment
+                    return
+                if random.random() < 0.5: 
+                    combat_log.append("You fled successfully!"); game_state = "playing"
+                else: 
+                    combat_log.append("You failed to flee!"); enemy_turn()
         elif combat_menu_state == "magic":
             spell_name = ""
             if key == b'1': spell_name = dialogue_options[0]
@@ -1044,14 +1120,16 @@ def keyboardListener(key, x, y):
             elif key == b'4': combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; return
             if spell_name:
                 mana_cost = MANA_COSTS.get(spell_name, 0)
-                if player.stats["Mana"] >= mana_cost or god_mode:
-                    if not god_mode:
+                if player.stats["Mana"] >= mana_cost or (god_mode and collided_npc.enemy_type != "Archdemon"):
+                    if not (god_mode and collided_npc.enemy_type != "Archdemon"):
                         player.stats["Mana"] -= mana_cost
                     if spell_name == "Heal":
                         heal_amount = player.stats["Intelligence"] * 3 + random.randint(5,10)
                         player.stats["Health"] = min(100, player.stats["Health"] + heal_amount); combat_log.append(f"You heal for {heal_amount} HP."); vfx_timers['heal'] = 0.5
-                    elif spell_name == "Protection": player.protection_turns = 2; combat_log.append("A magical shield surrounds you!")
-                    elif spell_name == "Buff": player.buff_turns = 2; combat_log.append("You feel your strength increase!")
+                    elif spell_name == "Protection": 
+                        player.protection_turns = 2; combat_log.append("A magical shield surrounds you!")
+                    elif spell_name == "Buff": 
+                        player.buff_turns = 2; combat_log.append("You feel your strength increase!")
                     elif spell_name == "Fireball":
                         damage = player.stats["Intelligence"] * 2 + random.randint(10, 20)
                         collided_npc.stats["Health"] -= damage; combat_log.append(f"Fireball hits for {damage} damage.")
@@ -1089,12 +1167,15 @@ def keyboardListener(key, x, y):
 
 def enemy_turn():
     """Logic for the enemy's action in combat."""
-    global dropped_items
-    if god_mode:
-        return # Player is invincible and takes no damage
+    global dropped_items, game_state
+    if god_mode and (not collided_npc or collided_npc.enemy_type != "Archdemon"):
+        return # Player is invincible unless fighting the Archdemon
     if collided_npc.stats["Health"] <= 0:
         player.xp += 50
-        combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP")
+        print(f"You defeated the {collided_npc.enemy_type}! +50 XP")
+        if collided_npc.enemy_type == "Archdemon":
+            game_state = "victory"
+            return
         
         if collided_npc.is_rogue:
             npcs.remove(collided_npc)
@@ -1108,7 +1189,6 @@ def enemy_turn():
             dropped_items.append(new_item)
             print("The enemy dropped a loot bag!")
         
-        global game_state
         game_state = "playing"
         return
     
@@ -1134,14 +1214,16 @@ def enemy_turn():
         player.debuff_turns -= 1
         if player.debuff_turns == 0: combat_log.append("The curse has lifted.")
     if player.stats["Health"] <= 0:
-        combat_log.append("You have been defeated!"); game_state = "playing"
+        combat_log.append("You have been defeated!")
+        game_state = "game_over" 
 
 def specialKeyListener(key, x, y):
     """
-    Handles special key inputs (arrow keys) for adjusting the camera angle and height.
+    Navigate stat allocation or weapon selection
     """
     global game_state, selected_stat_index, available_points
     if game_state == "character_creation":
+        
         if creation_step == "stats":
             if key == GLUT_KEY_UP: selected_stat_index = (selected_stat_index - 1 + len(stat_keys)) % len(stat_keys)
             elif key == GLUT_KEY_DOWN: selected_stat_index = (selected_stat_index + 1) % len(stat_keys)
@@ -1150,6 +1232,7 @@ def specialKeyListener(key, x, y):
             elif key == GLUT_KEY_LEFT:
                 stat = stat_keys[selected_stat_index]
                 if player.stats[stat] > player.base_stats[stat]: player.stats[stat] -= 1; available_points += 1
+        
         elif creation_step == "weapon":
             current_weapon_index = player.weapon_options.index(player.weapon)
             if key == GLUT_KEY_LEFT: new_index = (current_weapon_index - 1 + len(player.weapon_options)) % len(player.weapon_options)
@@ -1187,30 +1270,26 @@ def setupCamera():
                   800, 200, 0, 
                   0, 0, 1)
     else:
-        # --- SUGGESTION: New Third-Person Camera Logic ---
+        # --- Third-Person Camera Logic ---
         camera_distance = 80.0  # How far behind the player the camera is
         camera_height = 130.0     # How high above the player the camera is
 
-        # Calculate camera position based on player's rotation and position
         angle_rad = math.radians(player.rotation_angle - 90)
-        
-        # Calculate the offset from the player
+
         offset_x = -camera_distance * math.cos(angle_rad)
         offset_y = -camera_distance * math.sin(angle_rad)
 
-        # Final camera position
+
         cam_x = player.position[0] + offset_x
         cam_y = player.position[1] + offset_y
         cam_z = player.position[2] + camera_height 
-
-        # The point the camera looks at (player's head/torso area)
         look_at_x = player.position[0]
         look_at_y = player.position[1]
-        look_at_z = player.position[2] + 40.0 # Look slightly above the player's feet
+        look_at_z = player.position[2] + 40.0 
 
         gluLookAt(cam_x, cam_y, cam_z,
                   look_at_x, look_at_y, look_at_z,
-                  0, 0, 1) # World's up vector is Z
+                  0, 0, 1) 
 
 
 def idle():
@@ -1219,9 +1298,9 @@ def idle():
     now = time.time()
     delta_time = now - last_time
     last_time = now
-    total_time += delta_time # Keep a running total of elapsed time
+    total_time += delta_time # elapsed time
 
-    # Update the boss door animation
+    # boss door animation
     boss_door.update(delta_time)
 
     # Update VFX timers
@@ -1235,11 +1314,11 @@ def idle():
     
     glutPostRedisplay()
 
-# --- NEW: Manor Drawing Functions ---
+# --- Manor Drawing Functions ---
 def draw_wood_floor():
     """Draws a dark wood plank floor."""
     plank_width = 150
-    # Adjusted to cover the entire new manor layout
+    # cover the entire new manor layout
     num_planks_x = int((GRID_LENGTH * 2) / plank_width)
     num_planks_y = int((GRID_LENGTH * 2) / plank_width)
 
@@ -1248,7 +1327,6 @@ def draw_wood_floor():
             x = -GRID_LENGTH + i * plank_width
             y = -GRID_LENGTH + j * plank_width
             
-            # Alternate dark brown colors for wood effect
             if (i + j) % 2 == 0:
                 glColor3f(0.3, 0.15, 0.05) # Dark brown
             else:
@@ -1279,13 +1357,13 @@ def draw_manor_layout():
     hall_x = CENTRAL_HALL_WIDTH
     door_y_centers = [1000, 0, -1000] # Y-centers for the doorways
 
-    # Left Wall (3 doorways)
+    # Left Wall 
     draw_wall_segment(-hall_x, 1200, -hall_x, door_y_centers[0] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
     draw_wall_segment(-hall_x, door_y_centers[0] - DOOR_WIDTH/2, -hall_x, door_y_centers[1] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
     draw_wall_segment(-hall_x, door_y_centers[1] - DOOR_WIDTH/2, -hall_x, door_y_centers[2] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
     draw_wall_segment(-hall_x, door_y_centers[2] - DOOR_WIDTH/2, -hall_x, -1200, WALL_HEIGHT, wall_color)
 
-    # Right Wall (3 doorways)
+    # Right Wall
     draw_wall_segment(hall_x, 1200, hall_x, door_y_centers[0] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
     draw_wall_segment(hall_x, door_y_centers[0] - DOOR_WIDTH/2, hall_x, door_y_centers[1] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
     draw_wall_segment(hall_x, door_y_centers[1] - DOOR_WIDTH/2, hall_x, door_y_centers[2] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
@@ -1308,21 +1386,17 @@ def draw_manor_layout():
         draw_wall_segment(x_min, y_min, x_max, y_min, WALL_HEIGHT, wall_color)
         draw_wall_segment(x_min, y_max, x_max, y_max, WALL_HEIGHT, wall_color)
 
-    # --- Boss Room Walls ---
-    # Back and Front walls of the hall
 
 def draw_manor_environment():
     """Draws the complete spooky manor environment."""
+    
     draw_wood_floor()
     draw_manor_layout()
     boss_door.draw()
-    #draw_manor_props()
 
 def showScreen():
     """
     Display function to render the game scene:
-    - Clears the screen and sets up the camera.
-    - Draws everything of the screen
     """
     glClearColor(0.05, 0.05, 0.1, 1.0)
     # Clear color and depth buffers
@@ -1332,6 +1406,13 @@ def showScreen():
 
     if game_state == "character_creation":
         draw_character_creation_screen()
+    
+    elif game_state == "game_over":
+        draw_game_over_screen()
+    
+    elif game_state == "victory":
+        draw_victory_screen()
+    
     elif game_state == "playing":
         setupCamera()  # Configure camera perspective
 
@@ -1362,7 +1443,7 @@ def showScreen():
         setupCamera()
         glClear(GL_DEPTH_BUFFER_BIT)
         attack_flash_color = (1, 0.2, 0.2) if 'attack_flash' in vfx_timers else None
-        # --- NEW: Draw first-person view in dialogue ---
+        # --- Draw first-person view in dialogue ---
         if collided_npc: 
             draw_npc(collided_npc, is_in_dialogue=True, override_color=attack_flash_color)
         draw_player_hand_and_weapon(override_color=attack_flash_color)
@@ -1371,27 +1452,24 @@ def showScreen():
             draw_dialogue_screen()
         else: 
             draw_combat_screen()
-            #draw_status_effects_hud()
-        
-    # Swap buffers for smooth rendering (double buffering)
+
     glutSwapBuffers()
 
 
-# Main function to set up OpenGL window and loop
 def main():
     glutInit()
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)  # Double buffering, RGB color, depth test
     glutInitWindowSize(1000, 800)  # Window size
     glutInitWindowPosition(0, 0)  # Window position
-    wind = glutCreateWindow(b"3D OpenGL Intro")  # Create the window
-    glEnable(GL_DEPTH_TEST)  # Enable depth testing for 3D
-    glutDisplayFunc(showScreen)  # Register display function
-    glutKeyboardFunc(keyboardListener)  # Register keyboard listener
+    wind = glutCreateWindow(b"3D OpenGL Intro")  
+    glEnable(GL_DEPTH_TEST)  
+    glutDisplayFunc(showScreen)  
+    glutKeyboardFunc(keyboardListener)  
     glutSpecialFunc(specialKeyListener)
     glutMouseFunc(mouseListener)
-    glutIdleFunc(idle)  # Register the idle function to move the bullet automatically
+    glutIdleFunc(idle) 
 
-    glutMainLoop()  # Enter the GLUT main loop
+    glutMainLoop()
 
 if __name__ == "__main__":
     main()
