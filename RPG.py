@@ -44,6 +44,76 @@ class DroppedItem:
 
 dropped_items = [] # A list to hold all items on the ground
 
+# --- Manor Layout Definitions ---
+# Main grid size now represents the entire manor extent
+GRID_LENGTH = 1300
+CENTRAL_HALL_WIDTH = 200
+WING_WIDTH = 500
+WING_LENGTH = 400
+WALL_HEIGHT = 250
+DOOR_WIDTH = 250
+DOOR_HEIGHT = 220
+
+# Define the boundaries for each wing for NPC spawning and prop placement
+# (x_min, x_max, y_min, y_max)
+WING_BOUNDS = [
+    # Right Wings
+    (CENTRAL_HALL_WIDTH, CENTRAL_HALL_WIDTH + WING_WIDTH, 800, 800 + WING_LENGTH), # Front-Right
+    (CENTRAL_HALL_WIDTH, CENTRAL_HALL_WIDTH + WING_WIDTH, -200, 200),             # Middle-Right
+    (CENTRAL_HALL_WIDTH, CENTRAL_HALL_WIDTH + WING_WIDTH, -1200, -800),           # Back-Right
+    # Left Wings
+    (-CENTRAL_HALL_WIDTH - WING_WIDTH, -CENTRAL_HALL_WIDTH, 800, 800 + WING_LENGTH), # Front-Left
+    (-CENTRAL_HALL_WIDTH - WING_WIDTH, -CENTRAL_HALL_WIDTH, -200, 200),             # Middle-Left
+    (-CENTRAL_HALL_WIDTH - WING_WIDTH, -CENTRAL_HALL_WIDTH, -1200, -800),           # Back-Left
+]
+BOSS_ROOM_BOUNDS = (-CENTRAL_HALL_WIDTH, CENTRAL_HALL_WIDTH, 1200, 1200 + WING_LENGTH)
+
+# Define walkable areas for player collision detection
+PLAYER_COLLISION_BUFFER = 20 # Half of player's width
+
+DOORWAY_Y_CENTERS = [1000, 0, -1000]
+DOORWAY_RECTS = []
+for y_center in DOORWAY_Y_CENTERS:
+    y_min_door = y_center - DOOR_WIDTH / 2
+    y_max_door = y_center + DOOR_WIDTH / 2
+    # Right doorways connecting hall to right wings
+    DOORWAY_RECTS.append((
+        CENTRAL_HALL_WIDTH - PLAYER_COLLISION_BUFFER, 
+        CENTRAL_HALL_WIDTH + 1, # Span the wall, +1 to include wing start
+        y_min_door, 
+        y_max_door
+    ))
+    # Left doorways connecting hall to left wings
+    DOORWAY_RECTS.append((
+        -CENTRAL_HALL_WIDTH - 1, 
+        -CENTRAL_HALL_WIDTH + PLAYER_COLLISION_BUFFER, # Span the wall, -1 to include wing end
+        y_min_door, 
+        y_max_door
+    ))
+
+WALKABLE_RECTS = [
+    # Central Hall
+    (-CENTRAL_HALL_WIDTH + PLAYER_COLLISION_BUFFER, CENTRAL_HALL_WIDTH - PLAYER_COLLISION_BUFFER, -1200 + PLAYER_COLLISION_BUFFER, 1200 - PLAYER_COLLISION_BUFFER),
+    # Wings (unpack the list of tuples)
+    *WING_BOUNDS,
+    # Boss Room (for future use)
+    BOSS_ROOM_BOUNDS,
+    # Doorway connectors to bridge the gap
+    *DOORWAY_RECTS
+]
+
+
+# A new helper function for player collision
+def is_valid_position(x, y):
+    """Checks if the player's target position is within a walkable area."""
+    for rect in WALKABLE_RECTS:
+        # Check if the point is inside any of the walkable rectangles
+        if (rect[0] <= x <= rect[1] and
+            rect[2] <= y <= rect[3]):
+            return True
+    return False
+
+
 # Player class to manage player stats and level
 class Player:
     def __init__(self):
@@ -161,7 +231,6 @@ camera_angle = 90
 final_x, final_y, final_z = camera_pos
 
 fovY = 120  # Field of view
-GRID_LENGTH = 600  # Length of grid lines
 
 
 def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18):
@@ -262,7 +331,7 @@ def draw_dialogue_screen():
         draw_text(50, y_offset, f"{i+1}. {option}")
         y_offset -= 40
     
-def generate_and_spawn_npc(is_rogue):
+def generate_and_spawn_npc(is_rogue, wing_bounds):
     """Generates a composite NPC from the pools and spawns it on the map."""
     composition = []
     # 1. Choose a torso and assign its color
@@ -316,9 +385,10 @@ def generate_and_spawn_npc(is_rogue):
     elif random.random() < 0.4: # 40% chance for a friendly NPC to have a quest
         has_quest = True
 
-    # 4. Get a random position on the map
-    x = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
-    y = random.uniform(-GRID_LENGTH + 50, GRID_LENGTH - 50)
+    # 4. Get a random position within the specified wing
+    x_min, x_max, y_min, y_max = wing_bounds
+    x = random.uniform(x_min + 50, x_max - 50)
+    y = random.uniform(y_min + 50, y_max - 50)
     position = [x, y, 0]
 
     # --- NEW: Generate and store unique animation parameters for this NPC ---
@@ -553,7 +623,8 @@ def keyboardListener(key, x, y):
                 total_npcs, num_rogues = 6, 3
                 spawn_list = [True] * num_rogues + [False] * (total_npcs - num_rogues)
                 random.shuffle(spawn_list)
-                for is_rogue in spawn_list: generate_and_spawn_npc(is_rogue)
+                for i, is_rogue in enumerate(spawn_list): 
+                    generate_and_spawn_npc(is_rogue, WING_BOUNDS[i])
 
     elif game_state == "playing":
         # --- FIX ---
@@ -596,11 +667,12 @@ def keyboardListener(key, x, y):
                     dialogue_options = ["Who are you?", "How to get out of this place?", "Can you help me?", "Leave"]
                 return
             
-        # Boundary check to keep the player within the walls
-        bound = GRID_LENGTH - 40 # A small buffer from the wall edge
-        if -bound <= new_pos_x <= bound and -bound <= new_pos_y <= bound:
+        
+        # Boundary check using the new system
+        if is_valid_position(new_pos_x, new_pos_y):
             player.position[0] = new_pos_x
             player.position[1] = new_pos_y
+        
         check_item_collision()
     elif game_state == "dialogue":
         if key == b'1':
@@ -760,6 +832,7 @@ def keyboardListener(key, x, y):
                     else: # Debuff
                         player.debuff_turns = 3; combat_log.append("The potion was a curse! You feel weaker.")
                 combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; enemy_turn()
+
 def enemy_turn():
     """Logic for the enemy's action in combat."""
     global dropped_items
@@ -817,7 +890,6 @@ def specialKeyListener(key, x, y):
             elif key == GLUT_KEY_RIGHT: new_index = (current_weapon_index + 1) % len(player.weapon_options)
             else: return
             player.weapon = player.weapon_options[new_index]
-    
 
 
 def mouseListener(button, state, x, y):
@@ -894,6 +966,89 @@ def idle():
     
     glutPostRedisplay()
 
+# --- NEW: Manor Drawing Functions ---
+def draw_wood_floor():
+    """Draws a dark wood plank floor."""
+    plank_width = 150
+    # Adjusted to cover the entire new manor layout
+    num_planks_x = int((GRID_LENGTH * 2) / plank_width)
+    num_planks_y = int((GRID_LENGTH * 2) / plank_width)
+
+    for i in range(num_planks_x):
+        for j in range(num_planks_y):
+            x = -GRID_LENGTH + i * plank_width
+            y = -GRID_LENGTH + j * plank_width
+            
+            # Alternate dark brown colors for wood effect
+            if (i + j) % 2 == 0:
+                glColor3f(0.3, 0.15, 0.05) # Dark brown
+            else:
+                glColor3f(0.25, 0.1, 0.0) # Even darker brown
+
+            glBegin(GL_QUADS)
+            glVertex3f(x, y, 0)
+            glVertex3f(x + plank_width, y, 0)
+            glVertex3f(x + plank_width, y + plank_width, 0)
+            glVertex3f(x, y + plank_width, 0)
+            glEnd()
+
+def draw_wall_segment(x1, y1, x2, y2, height, color):
+    """Draws a single rectangular wall segment."""
+    glColor3f(*color)
+    glBegin(GL_QUADS)
+    glVertex3f(x1, y1, 0)
+    glVertex3f(x2, y2, 0)
+    glVertex3f(x2, y2, height)
+    glVertex3f(x1, y1, height)
+    glEnd()
+
+def draw_manor_layout():
+    """Draws the entire manor structure including all wings and doorways."""
+    wall_color = (0.2, 0.2, 0.25)
+    
+    # --- Central Hall Walls ---
+    hall_x = CENTRAL_HALL_WIDTH
+    door_y_centers = [1000, 0, -1000] # Y-centers for the doorways
+
+    # Left Wall (3 doorways)
+    draw_wall_segment(-hall_x, 1200, -hall_x, door_y_centers[0] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
+    draw_wall_segment(-hall_x, door_y_centers[0] - DOOR_WIDTH/2, -hall_x, door_y_centers[1] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
+    draw_wall_segment(-hall_x, door_y_centers[1] - DOOR_WIDTH/2, -hall_x, door_y_centers[2] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
+    draw_wall_segment(-hall_x, door_y_centers[2] - DOOR_WIDTH/2, -hall_x, -1200, WALL_HEIGHT, wall_color)
+
+    # Right Wall (3 doorways)
+    draw_wall_segment(hall_x, 1200, hall_x, door_y_centers[0] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
+    draw_wall_segment(hall_x, door_y_centers[0] - DOOR_WIDTH/2, hall_x, door_y_centers[1] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
+    draw_wall_segment(hall_x, door_y_centers[1] - DOOR_WIDTH/2, hall_x, door_y_centers[2] + DOOR_WIDTH/2, WALL_HEIGHT, wall_color)
+    draw_wall_segment(hall_x, door_y_centers[2] - DOOR_WIDTH/2, hall_x, -1200, WALL_HEIGHT, wall_color)
+    
+    # Back and Front walls of the hall
+    draw_wall_segment(-hall_x, -1200, hall_x, -1200, WALL_HEIGHT, wall_color)
+    draw_wall_segment(-hall_x, 1200, hall_x, 1200, WALL_HEIGHT, wall_color)
+
+    # --- Wing Walls ---
+    for bounds in WING_BOUNDS:
+        x_min, x_max, y_min, y_max = bounds
+        # Far wall
+        if x_min < 0: # Left wings
+            draw_wall_segment(x_min, y_min, x_min, y_max, WALL_HEIGHT, wall_color)
+        else: # Right wings
+            draw_wall_segment(x_max, y_min, x_max, y_max, WALL_HEIGHT, wall_color)
+        # Side walls
+        draw_wall_segment(x_min, y_min, x_max, y_min, WALL_HEIGHT, wall_color)
+        draw_wall_segment(x_min, y_max, x_max, y_max, WALL_HEIGHT, wall_color)
+
+    # --- Boss Room Walls ---
+    bx_min, bx_max, by_min, by_max = BOSS_ROOM_BOUNDS
+    draw_wall_segment(bx_min, by_min, bx_min, by_max, WALL_HEIGHT, wall_color)
+    draw_wall_segment(bx_max, by_min, bx_max, by_max, WALL_HEIGHT, wall_color)
+    draw_wall_segment(bx_min, by_max, bx_max, by_max, WALL_HEIGHT, wall_color)
+
+def draw_manor_environment():
+    """Draws the complete spooky manor environment."""
+    draw_wood_floor()
+    draw_manor_layout()
+    #draw_manor_props()
 
 def showScreen():
     """
@@ -901,6 +1056,7 @@ def showScreen():
     - Clears the screen and sets up the camera.
     - Draws everything of the screen
     """
+    glClearColor(0.05, 0.05, 0.1, 1.0)
     # Clear color and depth buffers
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     glLoadIdentity()  # Reset modelview matrix
@@ -911,62 +1067,8 @@ def showScreen():
     elif game_state == "playing":
         setupCamera()  # Configure camera perspective
 
-        GRID_SIZE = 25  # The number of tiles in one dimension
-        tile_size = (GRID_LENGTH * 2) / GRID_SIZE
-        
-        for row in range(GRID_SIZE):
-            for col in range(GRID_SIZE):
-                # Calculate the coordinates for the corners of the tile
-                x1 = -GRID_LENGTH + (col * tile_size)
-                x2 = x1 + tile_size
-                y1 = -GRID_LENGTH + (row * tile_size)
-                y2 = y1 + tile_size
-                
-                # Alternate colors for a checkerboard pattern
-                if (row+col) % 2 == 0:
-                    glColor3f(1.0, 1.0, 1.0) # White
-                else:
-                    glColor3f(0.7, 0.5, 0.95)  # Lavender
-                
-                glBegin(GL_QUADS)
-                glVertex3f(x1, y1, 0)
-                glVertex3f(x2, y1, 0)
-                glVertex3f(x2, y2, 0)
-                glVertex3f(x1, y2, 0)
-                glEnd()
-            
-        w_height = 100 
-        glColor3f(1, 1, 1) 
-        glBegin(GL_QUADS)
-        glVertex3f(-GRID_LENGTH, GRID_LENGTH, 0)
-        glVertex3f(GRID_LENGTH, GRID_LENGTH, 0)
-        glVertex3f(GRID_LENGTH, GRID_LENGTH, w_height)
-        glVertex3f(-GRID_LENGTH, GRID_LENGTH, w_height)
-        glEnd()
-
-        glColor3f(0, 1, 1) 
-        glBegin(GL_QUADS)
-        glVertex3f(-GRID_LENGTH, -GRID_LENGTH, 0)
-        glVertex3f(GRID_LENGTH, -GRID_LENGTH, 0)
-        glVertex3f(GRID_LENGTH, -GRID_LENGTH, w_height)
-        glVertex3f(-GRID_LENGTH, -GRID_LENGTH, w_height)
-        glEnd()
-
-        glColor3f(0, 0, 1) 
-        glBegin(GL_QUADS)
-        glVertex3f(GRID_LENGTH, -GRID_LENGTH, 0)
-        glVertex3f(GRID_LENGTH, GRID_LENGTH, 0)
-        glVertex3f(GRID_LENGTH, GRID_LENGTH, w_height)
-        glVertex3f(GRID_LENGTH, -GRID_LENGTH, w_height)
-        glEnd()
-
-        glColor3f(0, 1, 0) 
-        glBegin(GL_QUADS)
-        glVertex3f(-GRID_LENGTH, -GRID_LENGTH, 0)
-        glVertex3f(-GRID_LENGTH, GRID_LENGTH, 0)
-        glVertex3f(-GRID_LENGTH, GRID_LENGTH, w_height)
-        glVertex3f(-GRID_LENGTH, -GRID_LENGTH, w_height)
-        glEnd()
+        # --- NEW: Draw the manor environment ---
+        draw_manor_environment()
 
         # --- Display Player Stats ---
         draw_text(10, 770, f"Level: {player.level} (XP: {player.xp}/{player.xp_to_next_level})")
