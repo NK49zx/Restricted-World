@@ -25,7 +25,7 @@ DEMONIC_GIBBERISH = [
 ]
 
 # --- Visual Effects Management ---
-vfx_timers = {} # Holds timers for temporary effects like attack flashes
+vfx_timers = {}
 
 
 # --- Dialogue and Interaction State ---
@@ -43,7 +43,7 @@ MANA_COSTS = {
     "Fireball": 20, "Reflect": 12
 }
 
-# --- NEW: Dropped Item Data ---
+# --- Dropped Item Data ---
 class DroppedItem:
     def __init__(self, position, item_type='loot', value=25):
         self.position = position
@@ -61,9 +61,9 @@ class BossKey:
 class BossDoor:
     def __init__(self, center_x, center_y):
         self.center = [center_x, center_y]
-        self.state = 'hidden'  # Can be 'hidden', 'revealed', 'opening', 'open'
+        self.state = 'hidden' 
         self.angle = 0.0
-        self.animation_speed = 45.0  # Slower, more dramatic opening
+        self.animation_speed = 45.0  # Door opening speed
         self.key = BossKey([center_x, center_y - 100, 50]) # Key floats in front
         self.key_present = False
 
@@ -86,7 +86,7 @@ class BossDoor:
         if self.state == 'opening':
             self.angle += self.animation_speed * delta_time
             if self.angle >= 90.0:
-                self.angle = 90.0
+                self.angle = 180.0
                 self.state = 'open'
 
     def draw_key(self):
@@ -192,7 +192,7 @@ for y_center in DOORWAY_Y_CENTERS:
         y_max_door
     ))
 
-# NEW: Define a specific walkable rectangle for the boss doorway
+# Define a specific walkable rectangle for the boss doorway
 BOSS_DOORWAY_RECT = (
     -DOOR_WIDTH / 2, 
     DOOR_WIDTH / 2, 
@@ -640,6 +640,9 @@ def draw_npc(npc, is_in_dialogue=False, override_color=None):
         glRotatef(angle_to_player - 90, 0, 0, 1)
         # Applied the breathing_scale
         glScalef(0.5 * breathing_scale, 0.5 * breathing_scale, 0.5 * breathing_scale)
+    
+        if npc.enemy_type == "Archdemon":
+            glScalef(2, 2, 2)
     
     glRotatef(90, 1, 0, 0)
 
@@ -1416,7 +1419,7 @@ def showScreen():
     elif game_state == "playing":
         setupCamera()  # Configure camera perspective
 
-        # --- NEW: Draw the manor environment ---
+        # --- Draw the manor environment ---
         draw_manor_environment()
 
         if god_mode:
