@@ -16,6 +16,12 @@ available_points = 5
 selected_stat_index = 0
 stat_keys = ["Strength", "Dexterity", "Intelligence"]
 
+# --- Visual Effects Management ---
+vfx_timers = {} # Holds timers for temporary effects like attack flashes
+
+# --- Spooky Background Data ---
+star_positions = []
+
 # --- Dialogue and Interaction State ---
 collided_npc = None
 previous_camera_pos = None
@@ -23,6 +29,20 @@ dialogue_options = []
 combat_log = [] # Stores messages during a fight
 dialogue_text = "" # NEW: Stores the NPC's current dialogue line
 interaction_range = 75.0 # The radius within which the player can interact with an NPC
+combat_menu_state = "main"
+# --- Spell Data ---
+MANA_COSTS = {
+    "Heal": 15, "Protection": 10, "Buff": 10,
+    "Fireball": 20, "Reflect": 12
+}
+
+# --- NEW: Dropped Item Data ---
+class DroppedItem:
+    def __init__(self, position):
+        self.position = position
+        self.collision_radius = 20.0
+
+dropped_items = [] # A list to hold all items on the ground
 
 # Player class to manage player stats and level
 class Player:
@@ -51,6 +71,14 @@ class Player:
         # --- NEW: Player's chosen weapon ---
         self.weapon = "Sword" # Default weapon
         self.weapon_options = ["Sword", "Magic Staff"]
+        # Attributes to track status effects
+        self.protection_turns = 0
+        self.buff_turns = 0
+        self.reflect_turns = 0
+        self.debuff_turns = 0
+        self.inventory = {"Healing Potion": 1, "Mana Potion": 1, "Mysterious Potion": 0} # Start with one of each
+        self.collision_radius = 20.0
+
 
 
 player = Player()
@@ -72,6 +100,7 @@ class NPC:
         self.has_given_quest = False
         self.has_given_help = False
         self.xp_awarded = False
+        self.is_revealed = False
 
 
 npcs = [] # A list to hold all the NPC objects in the world
@@ -160,24 +189,42 @@ def draw_text(x, y, text, font=GLUT_BITMAP_HELVETICA_18):
     glPopMatrix()
     glMatrixMode(GL_MODELVIEW)
 
+def draw_spooky_background():
+    """Draws an animated spooky background for the character creation screen."""
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
+    gluOrtho2D(0, 1000, 0, 800)
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+    
+    # Dark gradient background
+    glBegin(GL_QUADS)
+    glColor3f(0.0, 0.0, 0.0) # Black at the bottom
+    glVertex2f(0, 0); glVertex2f(1000, 0)
+    glColor3f(0.8, 0.1, 0.1) # Dark purple at the top
+    glVertex2f(1000, 800); glVertex2f(0, 800)
+    glEnd()
+
+    
+    #x = random.uniform(-700, 700)
+    #glColor3f(1,1,1) # Red moon
+    #glPushMatrix(); glTranslatef(x, 650, -60); glutSolidSphere(80, 20, 20); glPopMatrix()
+
+    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
 
 def draw_character_creation_screen():
-    """Draws the UI for the character creation state."""
+    draw_spooky_background()
+    glClear(GL_DEPTH_BUFFER_BIT)
     if creation_step == "stats":
-        draw_text(350, 700, "Create Your Character", GLUT_BITMAP_TIMES_ROMAN_24)
-        draw_text(250, 650, "Use UP/DOWN to select a stat. Use LEFT/RIGHT to change values.")
+        draw_text(390, 700, "Restricted World", GLUT_BITMAP_TIMES_ROMAN_24)
+        draw_text(390, 650, "Prepare Your Escape")
         draw_text(400, 550, f"Points to Spend: {available_points}")
         y_offset = 450
         for i, stat in enumerate(stat_keys):
-            prefix = "> " if i == selected_stat_index else "  "
-            draw_text(400, y_offset, f"{prefix}{stat}: {player.stats[stat]}")
-            y_offset -= 40
+            prefix = "> " if i == selected_stat_index else "  "; draw_text(400, y_offset, f"{prefix}{stat}: {player.stats[stat]}"); y_offset -= 40
         draw_text(380, 200, "Press ENTER to Continue")
     elif creation_step == "weapon":
         draw_text(380, 700, "Choose Your Weapon", GLUT_BITMAP_TIMES_ROMAN_24)
-        draw_text(250, 650, "Use LEFT/RIGHT to select a weapon.")
-        weapon_display = f"< {player.weapon} >"
-        draw_text(420, 500, weapon_display)
+        draw_text(390, 650, "Prepare Your Escape")
+        draw_text(420, 500, f"< {player.weapon} >")
         draw_text(380, 200, "Press ENTER to Start Game")
 
 def draw_quests():
@@ -188,10 +235,11 @@ def draw_quests():
         draw_text(750, y_offset, f"- {quest}")
         y_offset -= 30
 
+
 def draw_combat_screen():
     """Draws the UI for the combat state."""
     if not collided_npc: return
-    draw_text(50, 750, f"Player HP: {player.stats['Health']}")
+    draw_text(50, 750, f"Player HP: {player.stats['Health']} | Mana: {player.stats['Mana']}")
     draw_text(700, 750, f"{collided_npc.enemy_type} HP: {collided_npc.stats['Health']}")
     y_offset = 150
     for i, option in enumerate(dialogue_options):
@@ -284,48 +332,41 @@ def generate_and_spawn_npc(is_rogue):
     new_npc = NPC(position, composition, z_offset, animation_params, is_rogue, has_quest, enemy_type)
     npcs.append(new_npc)
 
-def draw_quest_indicator():
-    """Draws a yellow exclamation mark in the NPC's local space."""
-    glPushMatrix()
-    # Position it high above the NPC's head
-    glTranslatef(0, 110, 0) 
-    glColor3f(1.0, 0.0, 0.0) # Red
 
-    # Draw the main bar of the '!'
+def draw_dropped_item(item):
+    """Draws a 3D model for a dropped item."""
     glPushMatrix()
-    glRotatef(-90, 1, 0, 0)
-    gluCylinder(gluNewQuadric(), 5, 5, 25, 10, 5)
-    glPopMatrix()
-
-    # Draw the dot of the '!'
-    glPushMatrix()
-    glTranslatef(0, -15, 0)
-    glutSolidSphere(6, 10, 10)
-    glPopMatrix()
+    # Position the item and make it bob up and down
+    bob_height = 10 * (1 + math.sin(total_time * 2))
+    glTranslatef(item.position[0], item.position[1], 10 + bob_height)
+    glScalef(0.3, 0.3, 0.3)
+    glRotatef(total_time * 50, 0, 0, 1) # Gently rotate
+    glRotatef(90, 1, 0, 0)
     
+    # Model for a loot bag
+    glColor3f(0.5, 0.3, 0.1) # Brown
+    glutSolidSphere(20, 10, 10)
+    glTranslatef(0, 0, 15)
+    glColor3f(0.8, 0.8, 0.2) # Gold tie
+    glutSolidCube(15)
     glPopMatrix()
 
 # --- NEW: Weapon Drawing Functions ---
-def draw_sword():
+def draw_sword(override_color=None):
     glPushMatrix()
-    glColor3f(0.7, 0.7, 0.8) # Silver blade
-    glPushMatrix(); glScalef(0.2, 1.5, 0.1); glutSolidCube(50); glPopMatrix() # Blade
-    glColor3f(0.6, 0.4, 0.2) # Brown hilt
-    glPushMatrix(); glTranslatef(0, -45, 0); glScalef(0.5, 0.2, 0.2); glutSolidCube(30); glPopMatrix() # Guard
-    glPushMatrix(); glTranslatef(0, -55, 0); glScalef(0.15, 0.4, 0.15); glutSolidCube(40); glPopMatrix() # Handle
-    glColor3f(0.8, 0.8, 0.2) # Gold pommel
-    glPushMatrix(); glTranslatef(0, -70, 0); glutSolidSphere(7, 10, 10); glPopMatrix() # Pommel
+    glColor3f(*(override_color if override_color else (0.7, 0.7, 0.8))); glPushMatrix(); glScalef(0.2, 1.5, 0.1); glutSolidCube(50); glPopMatrix()
+    glColor3f(*(override_color if override_color else (0.6, 0.4, 0.2))); glPushMatrix(); glTranslatef(0, -45, 0); glScalef(0.5, 0.2, 0.2); glutSolidCube(30); glPopMatrix()
+    glPushMatrix(); glTranslatef(0, -55, 0); glScalef(0.15, 0.4, 0.15); glutSolidCube(40); glPopMatrix()
+    glColor3f(*(override_color if override_color else (0.8, 0.8, 0.2))); glPushMatrix(); glTranslatef(0, -70, 0); glutSolidSphere(7, 10, 10); glPopMatrix()
     glPopMatrix()
 
-def draw_magic_staff():
+def draw_magic_staff(override_color=None):
     glPushMatrix()
-    glColor3f(0.5, 0.3, 0.1) # Brown wood
-    glPushMatrix(); glScalef(0.1, 2.5, 0.1); glutSolidCube(60); glPopMatrix() # Staff shaft
-    glColor3f(0.2, 0.8, 1.0) # Glowing blue gem
-    glPushMatrix(); glTranslatef(0, 80, 0); glutSolidSphere(12, 20, 20); glPopMatrix() # Gem
+    glColor3f(*(override_color if override_color else (0.5, 0.3, 0.1))); glPushMatrix(); glScalef(0.1, 2.5, 0.1); glutSolidCube(60); glPopMatrix()
+    glColor3f(*(override_color if override_color else (0.2, 0.8, 1.0))); glPushMatrix(); glTranslatef(0, 80, 0); glutSolidSphere(12, 20, 20); glPopMatrix()
     glPopMatrix()
 
-def draw_npc(npc, is_in_dialogue=False):
+def draw_npc(npc, is_in_dialogue=False, override_color=None):
     """Draws a single composite NPC."""
     glPushMatrix()
 
@@ -355,36 +396,20 @@ def draw_npc(npc, is_in_dialogue=False):
     
     glRotatef(90, 1, 0, 0)
 
-    # --- NEW: Draw the quest indicator if the NPC has one ---
-    # This is drawn after scaling so it pulses with the NPC
-    if npc.has_quest and not is_in_dialogue:
-        draw_quest_indicator()
-
     # Iterate through and draw each part of the NPC's body
     for part in npc.composition:
-        glPushMatrix()
-        glColor3f(*part['color'])
-        
-        if 'position' in part:
-            glTranslatef(*part['position'])
-        if 'scale' in part:
-            glScalef(*part['scale'])
-
-        if part['shape'] == 'cube':
-            glutSolidCube(*part['params'])
-        elif part['shape'] == 'sphere':
-            glutSolidSphere(*part['params'])
+        glPushMatrix(); glColor3f(*(override_color if override_color else part['color']))
+        if 'position' in part: glTranslatef(*part['position'])
+        if 'scale' in part: glScalef(*part['scale'])
+        if part['shape'] == 'cube': glutSolidCube(*part['params'])
+        elif part['shape'] == 'sphere': glutSolidSphere(*part['params'])
         elif part['shape'] == 'cone':
-            glPushMatrix()
-            glRotatef(90, 1, 0, 0)
-            gluCylinder(gluNewQuadric(), part['params'][0], 0, part['params'][1], part['params'][2], part['params'][3])
-            glPopMatrix()
-            
+            glPushMatrix(); glRotatef(90, 1, 0, 0); gluCylinder(gluNewQuadric(), part['params'][0], 0, part['params'][1], part['params'][2], part['params'][3]); glPopMatrix()
         glPopMatrix()
 
     glPopMatrix()
 
-def draw_player_hand_and_weapon():
+def draw_player_hand_and_weapon(override_color=None):
     """Draws a first-person view of the player's weapon on the right."""
     glPushMatrix()
     # Positioned on the right side of the screen, adjusted for a better view
@@ -396,9 +421,9 @@ def draw_player_hand_and_weapon():
     glScalef(1.2, 1.2, 1.2)
     glRotatef(110, 1, 0, 0)
     if player.weapon == "Sword":
-        draw_sword()
+        draw_sword(override_color)
     elif player.weapon == "Magic Staff":
-        draw_magic_staff()
+        draw_magic_staff(override_color=None)
     glPopMatrix()
     
     glPopMatrix()
@@ -490,6 +515,7 @@ def draw_player():
 
     glPopMatrix() # End of player model matrix
 
+
 def get_nearest_npc():
     """Finds the NPC closest to the player."""
     closest_npc = None
@@ -501,11 +527,23 @@ def get_nearest_npc():
             closest_npc = npc
     return closest_npc, min_dist
 
+def check_item_collision():
+    """Checks for and handles collision with dropped items."""
+    global dropped_items
+    for item in dropped_items[:]: # Iterate over a copy
+        dist = math.sqrt((player.position[0] - item.position[0])**2 + (player.position[1] - item.position[1])**2)
+        if dist < player.collision_radius + item.collision_radius:
+            item_found = random.choice(["Healing Potion", "Mana Potion", "Mysterious Potion"])
+            player.inventory[item_found] += 1
+            print(f"You picked up a {item_found}!") # Using print as a temporary notification
+            dropped_items.remove(item)
+            break # Pick up one item per frame
+
 def keyboardListener(key, x, y):
     """
     Handles keyboard inputs for player movement, gun rotation, camera updates, and cheat mode toggles.
     """
-    global game_state, camera_pos, camera_angle, collided_npc, previous_camera_pos, dialogue_options, dialogue_text, creation_step, combat_log
+    global game_state, camera_pos, camera_angle, collided_npc, previous_camera_pos, dialogue_options, dialogue_text, creation_step, combat_log, combat_menu_state, vfx_timers
     if game_state == "character_creation":
         if key == b'\r':
             if creation_step == "stats":
@@ -549,10 +587,13 @@ def keyboardListener(key, x, y):
         if key == b'i':
             npc_to_interact, dist = get_nearest_npc()
             if npc_to_interact and dist <= interaction_range:
-                game_state = "dialogue"
-                collided_npc = npc_to_interact
-                dialogue_text = "..."
-                dialogue_options = ["Who are you?", "How to get out of this place?", "Can you help me?", "Leave"]
+                if npc_to_interact.is_rogue and npc_to_interact.is_revealed:
+                    game_state, collided_npc, dialogue_text = "combat", npc_to_interact, ""
+                    combat_log = [f"The {collided_npc.enemy_type} is still hostile!"]
+                    dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]
+                else:
+                    game_state, collided_npc, dialogue_text = "dialogue", npc_to_interact, "..."
+                    dialogue_options = ["Who are you?", "How to get out of this place?", "Can you help me?", "Leave"]
                 return
             
         # Boundary check to keep the player within the walls
@@ -560,14 +601,15 @@ def keyboardListener(key, x, y):
         if -bound <= new_pos_x <= bound and -bound <= new_pos_y <= bound:
             player.position[0] = new_pos_x
             player.position[1] = new_pos_y
-    
-    elif game_state == "dialogue" or game_state == "combat":
+        check_item_collision()
+    elif game_state == "dialogue":
         if key == b'1':
             if dialogue_options and dialogue_options[0] == "Who are you?":
                 if collided_npc.is_rogue:
                     enemy_blueprint = ENEMY_CATALOG[collided_npc.enemy_type]
                     collided_npc.composition, collided_npc.stats, dialogue_text = enemy_blueprint["composition"], enemy_blueprint["stats"].copy(), enemy_blueprint["dialogue"]
-                    game_state = "combat"; combat_log = [f"A {collided_npc.enemy_type} appears!"]; dialogue_options = ["Attack", "Use Item", "Flee"] 
+                    collided_npc.is_revealed = True
+                    game_state = "combat"; combat_log = [f"A {collided_npc.enemy_type} appears!"]; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"] 
                 else: 
                     dialogue_text = "Just a humble traveler, like you."
             elif dialogue_options and dialogue_options[0] == "Attack":
@@ -575,7 +617,7 @@ def keyboardListener(key, x, y):
                 collided_npc.stats["Health"] -= player_damage
                 combat_log.append(f"You hit for {player_damage} damage.")
                 if collided_npc.stats["Health"] <= 0:
-                    player.xp += 50; combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP"); npcs.remove(collided_npc); game_state = "playing"; return
+                    player.xp += 50; print(f"You defeated the {collided_npc.enemy_type}! +50 XP"); npcs.remove(collided_npc); game_state = "playing"; return
                 enemy_damage = collided_npc.stats["Strength"] + random.randint(1, 3)
                 player.stats["Health"] -= enemy_damage
                 combat_log.append(f"Enemy hits for {enemy_damage} damage.")
@@ -591,10 +633,22 @@ def keyboardListener(key, x, y):
                     dialogue_text = random.choice(["I dunno.", "Who knows?"])
                 else:
                     collided_npc.has_given_quest = True
-                    enemy_to_kill = random.choice(list(ENEMY_CATALOG.keys())); quest_hints = [f"A powerful {enemy_to_kill} guards the exit.", "You must find the hidden door.", "A key is needed to unlock the way."]; quest_hint_text = random.choice(quest_hints)
-                    quest_objective = f"Defeat the {enemy_to_kill}" if "guards" in quest_hint_text else "Find the hidden door" if "door" in quest_hint_text else "Find the key"
-                    if quest_objective not in player.main_quests: player.main_quests.append(quest_objective)
+                    rogue_npcs = [npc for npc in npcs if npc.is_rogue]
+                    # FIX: Restore the full quest hint logic
+                    quest_hints = [ "You must find the hidden door.", "A key is needed to unlock the way." ]
+                    if rogue_npcs:
+                        quest_target_npc = random.choice(rogue_npcs)
+                        enemy_to_kill = quest_target_npc.enemy_type
+                        quest_hints.append(f"A powerful {enemy_to_kill} guards the exit.")
+                    
+                    quest_hint_text = random.choice(quest_hints)
                     dialogue_text = f"They whisper, '{quest_hint_text}'"
+                    quest_objective = ""
+                    if "door" in quest_hint_text: quest_objective = "Find the hidden door"
+                    elif "key" in quest_hint_text: quest_objective = "Find the key"
+                    else: quest_objective = f"Defeat the {enemy_to_kill}"
+                    if quest_objective not in player.main_quests:
+                        player.main_quests.append(quest_objective)
             elif len(dialogue_options) > 1 and dialogue_options[1] == "Use Item":
                 combat_log.append("You have no items!")
 
@@ -634,9 +688,114 @@ def keyboardListener(key, x, y):
                 player.xp += xp_gain
                 collided_npc.xp_awarded = True
                 print(f"Gained {xp_gain} XP!")
+    elif game_state == "combat":
+        if combat_menu_state == "main":
+            if key == b'1': # Attack
+                vfx_timers['attack_flash'] = 0.2
+                if player.weapon == "Sword": player_damage = player.stats["Strength"] + random.randint(1, 6)
+                else: player_damage = player.stats["Intelligence"] + random.randint(1, 4)
+                if player.buff_turns > 0:
+                    bonus_damage = 10; player_damage += bonus_damage
+                    combat_log.append(f"Your buff adds {bonus_damage} damage!")
+                collided_npc.stats["Health"] -= player_damage
+                combat_log.append(f"You attack for {player_damage} damage.")
+                enemy_turn()
+            elif key == b'2': # Cast Magic
+                combat_menu_state = "magic"
+                if player.weapon == "Sword": dialogue_options = ["Heal", "Protection", "Buff", "Back"]
+                else: dialogue_options = ["Heal", "Fireball", "Reflect", "Back"]
+            elif key == b'3': # Use Item
+                combat_menu_state = "item"
+                dialogue_options = [f"{item} (x{count})" for item, count in player.inventory.items() if count > 0]
+                dialogue_options.append("Back")
+            elif key == b'4': # Flee
+                if random.random() < 0.5: combat_log.append("You fled successfully!"); game_state = "playing"
+                else: combat_log.append("You failed to flee!"); enemy_turn()
+        elif combat_menu_state == "magic":
+            spell_name = ""
+            if key == b'1': spell_name = dialogue_options[0]
+            elif key == b'2': spell_name = dialogue_options[1]
+            elif key == b'3': spell_name = dialogue_options[2]
+            elif key == b'4': combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; return
+            if spell_name:
+                mana_cost = MANA_COSTS.get(spell_name, 0)
+                if player.stats["Mana"] >= mana_cost:
+                    player.stats["Mana"] -= mana_cost
+                    if spell_name == "Heal":
+                        heal_amount = player.stats["Intelligence"] * 3 + random.randint(5,10)
+                        player.stats["Health"] = min(100, player.stats["Health"] + heal_amount); combat_log.append(f"You heal for {heal_amount} HP."); vfx_timers['heal'] = 0.5
+                    elif spell_name == "Protection": player.protection_turns = 2; combat_log.append("A magical shield surrounds you!")
+                    elif spell_name == "Buff": player.buff_turns = 2; combat_log.append("You feel your strength increase!")
+                    elif spell_name == "Fireball":
+                        damage = player.stats["Intelligence"] * 2 + random.randint(10, 20)
+                        collided_npc.stats["Health"] -= damage; combat_log.append(f"Fireball hits for {damage} damage.")
+                        vfx_timers['fireball'] = {'duration': 0.3, 'max_duration': 0.3, 'pos': collided_npc.position}; vfx_timers['attack_flash'] = 0.2
+                    elif spell_name == "Reflect": player.reflect_turns = 1; combat_log.append("You are surrounded by a shimmering aura!")
+                    combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; enemy_turn()
+                else: combat_log.append("Not enough mana!")
+             
+        elif combat_menu_state == "item":
+            item_name_to_use = None
+            available_items = [item for item, count in player.inventory.items() if count > 0]
+            if key == b'1' and len(available_items) >= 1: item_name_to_use = available_items[0]
+            elif key == b'2' and len(available_items) >= 2: item_name_to_use = available_items[1]
+            elif key == b'3' and len(available_items) >= 3: item_name_to_use = available_items[2]
+            elif (key == b'1' and len(available_items) == 0) or \
+                 (key == b'2' and len(available_items) == 1) or \
+                 (key == b'3' and len(available_items) == 2) or \
+                 key == b'4': # Back
+                combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; return
+            
+            if item_name_to_use:
+                player.inventory[item_name_to_use] -= 1
+                if item_name_to_use == "Healing Potion":
+                    player.stats["Health"] = 100; combat_log.append("You drink a Healing Potion. HP fully restored!")
+                elif item_name_to_use == "Mana Potion":
+                    player.stats["Mana"] = 50; combat_log.append("You drink a Mana Potion. Mana fully restored!")
+                elif item_name_to_use == "Mysterious Potion":
+                    if random.random() < 0.5: # Buff
+                        stat_to_buff = random.choice(stat_keys)
+                        player.base_stats[stat_to_buff] += 2; player.stats[stat_to_buff] += 2
+                        combat_log.append(f"The potion was a blessing! Permanent +2 {stat_to_buff}!")
+                    else: # Debuff
+                        player.debuff_turns = 3; combat_log.append("The potion was a curse! You feel weaker.")
+                combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; enemy_turn()
+def enemy_turn():
+    """Logic for the enemy's action in combat."""
+    global dropped_items
+    if collided_npc.stats["Health"] <= 0:
+        player.xp += 50; combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP")
+        # Loot Drop Logic
+        loot_chance = 0.8 # 80% chance to drop an item
+        if random.random() < loot_chance:
+            new_item = DroppedItem(collided_npc.position)
+            dropped_items.append(new_item)
+            print(f"The enemy dropped a loot bag!")
+        npcs.remove(collided_npc); global game_state; game_state = "playing"; return
+    
+    enemy_damage = collided_npc.stats["Strength"] + random.randint(1, 3)
+    if player.debuff_turns > 0: enemy_damage = int(enemy_damage * 1.5)
 
-        
-        
+    if player.reflect_turns > 0:
+        collided_npc.stats["Health"] -= enemy_damage; combat_log.append(f"You reflect {enemy_damage} damage back!")
+        vfx_timers['attack_flash'] = 0.2
+        if collided_npc.stats["Health"] <= 0:
+            player.xp += 50; combat_log.append(f"The {collided_npc.enemy_type} was defeated by its own attack! +50 XP")
+            npcs.remove(collided_npc); game_state = "playing"
+        player.reflect_turns -= 1; return
+    if player.protection_turns > 0:
+        combat_log.append("Your shield blocks all damage!")
+    else:
+        player.stats["Health"] -= enemy_damage; combat_log.append(f"The {collided_npc.enemy_type} hits you for {enemy_damage} damage.")
+    if player.protection_turns > 0: player.protection_turns -= 1
+    if player.buff_turns > 0:
+        player.buff_turns -= 1
+        if player.buff_turns == 0: combat_log.append("Your attack buff has worn off.")
+    if player.debuff_turns > 0:
+        player.debuff_turns -= 1
+        if player.debuff_turns == 0: combat_log.append("The curse has lifted.")
+    if player.stats["Health"] <= 0:
+        combat_log.append("You have been defeated!"); game_state = "playing"
 
 def specialKeyListener(key, x, y):
     """
@@ -723,6 +882,15 @@ def idle():
     delta_time = now - last_time
     last_time = now
     total_time += delta_time # Keep a running total of elapsed time
+
+    # Update VFX timers
+    for effect in list(vfx_timers.keys()):
+        if isinstance(vfx_timers[effect], dict): 
+            vfx_timers[effect]['duration'] -= delta_time
+            if vfx_timers[effect]['duration'] <= 0: del vfx_timers[effect]
+        else:
+            vfx_timers[effect] -= delta_time
+            if vfx_timers[effect] <= 0: del vfx_timers[effect]
     
     glutPostRedisplay()
 
@@ -812,21 +980,24 @@ def showScreen():
 
         for npc in npcs: # Draw all the NPCs in the list
             draw_npc(npc)
-        
+        for item in dropped_items: draw_dropped_item(item)
+
         draw_quests()
     
     elif game_state == "dialogue" or game_state == "combat":
         setupCamera()
-        if collided_npc:
-            draw_npc(collided_npc, is_in_dialogue=True)
-        
         glClear(GL_DEPTH_BUFFER_BIT)
-
+        attack_flash_color = (1, 0.2, 0.2) if 'attack_flash' in vfx_timers else None
         # --- NEW: Draw first-person view in dialogue ---
-        draw_player_hand_and_weapon()
+        if collided_npc: 
+            draw_npc(collided_npc, is_in_dialogue=True, override_color=attack_flash_color)
+        draw_player_hand_and_weapon(override_color=attack_flash_color)
+        
         if game_state == "dialogue": 
             draw_dialogue_screen()
-        else: draw_combat_screen()
+        else: 
+            draw_combat_screen()
+            #draw_status_effects_hud()
         
     # Swap buffers for smooth rendering (double buffering)
     glutSwapBuffers()
