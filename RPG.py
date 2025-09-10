@@ -15,6 +15,7 @@ creation_step = "stats"
 available_points = 5
 selected_stat_index = 0
 stat_keys = ["Strength", "Dexterity", "Intelligence"]
+god_mode = False # NEW: Cheat mode flag
 
 # --- Visual Effects Management ---
 vfx_timers = {} # Holds timers for temporary effects like attack flashes
@@ -30,6 +31,7 @@ combat_log = [] # Stores messages during a fight
 dialogue_text = "" # NEW: Stores the NPC's current dialogue line
 interaction_range = 75.0 # The radius within which the player can interact with an NPC
 combat_menu_state = "main"
+
 # --- Spell Data ---
 MANA_COSTS = {
     "Heal": 15, "Protection": 10, "Buff": 10,
@@ -38,11 +40,106 @@ MANA_COSTS = {
 
 # --- NEW: Dropped Item Data ---
 class DroppedItem:
-    def __init__(self, position):
+    def __init__(self, position, item_type='loot', value=25):
         self.position = position
         self.collision_radius = 20.0
+        self.item_type = item_type
+        self.value = value # Used for XP amount
 
 dropped_items = [] # A list to hold all items on the ground
+
+class BossKey:
+    def __init__(self, position):
+        self.position = position
+        self.collision_radius = 25.0
+
+class BossDoor:
+    def __init__(self, center_x, center_y):
+        self.center = [center_x, center_y]
+        self.state = 'hidden'  # Can be 'hidden', 'revealed', 'opening', 'open'
+        self.angle = 0.0
+        self.animation_speed = 45.0  # Slower, more dramatic opening
+        self.key = BossKey([center_x, center_y - 100, 50]) # Key floats in front
+        self.key_present = False
+
+    def reveal(self):
+        if self.state == 'hidden':
+            self.state = 'revealed'
+            self.key_present = True
+            print("A mysterious door has been revealed!")
+
+    def open(self):
+        if self.state == 'revealed':
+            self.state = 'opening'
+            self.key_present = False
+            # --- FIX ---
+            # Add both the boss room AND the doorway connector to the walkable areas
+            WALKABLE_RECTS.append(BOSS_ROOM_BOUNDS)
+            WALKABLE_RECTS.append(BOSS_DOORWAY_RECT)
+            spawn_boss()
+
+    def update(self, delta_time):
+        if self.state == 'opening':
+            self.angle += self.animation_speed * delta_time
+            if self.angle >= 90.0:
+                self.angle = 90.0
+                self.state = 'open'
+
+    def draw_key(self):
+        if not self.key_present:
+            return
+        glPushMatrix()
+        bob_height = 10 * (1 + math.sin(total_time * 1.5))
+        glTranslatef(self.key.position[0], self.key.position[1], self.key.position[2] + bob_height)
+        glRotatef(total_time * 60, 0, 0, 1) # Rotate the key
+        glScalef(0.4, 0.4, 0.4)
+        
+        # Key model
+        glColor3f(0.9, 0.7, 0.1) # Gold color
+        # Ring
+        glutSolidTorus(5, 20, 10, 20)
+        # Stem
+        glPushMatrix()
+        glScalef(0.2, 1.5, 0.2)
+        glTranslatef(0, -25, 0)
+        glutSolidCube(30)
+        glPopMatrix()
+        # Teeth
+        glTranslatef(0, -60, 0)
+        glScalef(0.6, 0.2, 0.2)
+        glutSolidCube(25)
+        glPopMatrix()
+
+    def draw(self):
+        if self.state == 'hidden':
+            return
+
+        self.draw_key()
+
+        # Draw the grand door
+        glPushMatrix()
+        glTranslatef(self.center[0], self.center[1], DOOR_HEIGHT / 2)
+        # Hinge is on the left side, so we translate to it, rotate, then translate back
+        glTranslatef(-DOOR_WIDTH / 2, 0, 0)
+        glRotatef(self.angle, 0, 0, 1)
+        glTranslatef(DOOR_WIDTH / 2, 0, 0)
+        
+        glScalef(DOOR_WIDTH, 15, DOOR_HEIGHT) # Make it thick and imposing
+        
+        # Base color
+        glColor3f(0.1, 0.05, 0.05)
+        glutSolidCube(1)
+        
+        # Decorative trim
+        glColor3f(0.8, 0.6, 0.1) # Gold trim
+        glPushMatrix()
+        glScalef(1.01, 1.01, 1.01)
+        glutWireCube(1)
+        glPopMatrix()
+        
+        glPopMatrix()
+
+boss_door = BossDoor(0, 1200) # Centered on the front wall
 
 # --- Manor Layout Definitions ---
 # Main grid size now represents the entire manor extent
@@ -90,6 +187,14 @@ for y_center in DOORWAY_Y_CENTERS:
         y_min_door, 
         y_max_door
     ))
+
+# NEW: Define a specific walkable rectangle for the boss doorway
+BOSS_DOORWAY_RECT = (
+    -DOOR_WIDTH / 2, 
+    DOOR_WIDTH / 2, 
+    1200 - PLAYER_COLLISION_BUFFER, 
+    1200 + PLAYER_COLLISION_BUFFER
+)
 
 WALKABLE_RECTS = [
     # Central Hall
@@ -219,6 +324,23 @@ ENEMY_CATALOG = {
             {'shape': 'cube', 'params': (35,), 'color': (0.5, 0.4, 0.2), 'position': (0, 70, 0)}, # Head
             {'shape': 'cube', 'params': (30,), 'scale': (0.8, 1.5, 0.8), 'color': (0.3, 0.2, 0.1), 'position': (-25, -65, 0)}, # Left Leg
             {'shape': 'cube', 'params': (30,), 'scale': (0.8, 1.5, 0.8), 'color': (0.3, 0.2, 0.1), 'position': (25, -65, 0)}, # Right Leg
+        ]
+    },
+    
+    "Archdemon": {
+        "stats": {"Health": 250, "Strength": 15},
+        "dialogue": "You dare trespass into my sanctum? Your soul is forfeit!",
+        "composition": [
+            # Main Body (Larger and more imposing)
+            {'shape': 'cube', 'params': (80,), 'scale': (1.2, 1.8, 1.0), 'color': (0.6, 0.1, 0.1), 'position': (0,0,0)}, # Torso
+            # Head
+            {'shape': 'sphere', 'params': (25, 20, 20), 'color': (0.5, 0.1, 0.1), 'position': (0, 90, 0)},
+            # Legs
+            {'shape': 'cube', 'params': (40,), 'scale': (0.8, 1.8, 0.8), 'color': (0.4, 0.1, 0.1), 'position': (-30, -90, 0)},
+            {'shape': 'cube', 'params': (40,), 'scale': (0.8, 1.8, 0.8), 'color': (0.4, 0.1, 0.1), 'position': (30, -90, 0)},
+            # Horns (Cones)
+            {'shape': 'cone', 'params': (10, 50, 10, 5), 'color': (0.3, 0.3, 0.3), 'position': (-20, 110, 20), 'rotation': (0, 0, -30)},
+            {'shape': 'cone', 'params': (10, 50, 10, 5), 'color': (0.3, 0.3, 0.3), 'position': (20, 110, 20), 'rotation': (0, 0, 30)},
         ]
     }
 }
@@ -413,14 +535,24 @@ def draw_dropped_item(item):
     glRotatef(total_time * 50, 0, 0, 1) # Gently rotate
     glRotatef(90, 1, 0, 0)
     
-    # Model for a loot bag
-    glColor3f(0.5, 0.3, 0.1) # Brown
-    glutSolidSphere(20, 10, 10)
-    glTranslatef(0, 0, 15)
-    glColor3f(0.8, 0.8, 0.2) # Gold tie
-    glutSolidCube(15)
-    glPopMatrix()
+    if item.item_type == 'loot':
+        # Model for a loot bag
+        glColor3f(0.5, 0.3, 0.1) # Brown
+        glutSolidSphere(20, 10, 10)
+        glTranslatef(0, 0, 15)
+        glColor3f(0.8, 0.8, 0.2) # Gold tie
+        glutSolidCube(15)
+    elif item.item_type == 'xp':
+        # Model for an XP Orb
+        glColor3f(0.2, 0.5, 1.0) # Bright Blue
+        glutSolidSphere(25, 15, 15)
+        # Add a little glow/pulse effect
+        pulse_scale = 1.0 + 0.1 * math.sin(total_time * 4)
+        glScalef(pulse_scale, pulse_scale, pulse_scale)
+        glColor4f(0.5, 0.8, 1.0, 0.5) # Translucent outer shell for glow
+        glutSolidSphere(28, 15, 15)
 
+    glPopMatrix()
 # --- NEW: Weapon Drawing Functions ---
 def draw_sword(override_color=None):
     glPushMatrix()
@@ -468,13 +600,23 @@ def draw_npc(npc, is_in_dialogue=False, override_color=None):
 
     # Iterate through and draw each part of the NPC's body
     for part in npc.composition:
-        glPushMatrix(); glColor3f(*(override_color if override_color else part['color']))
-        if 'position' in part: glTranslatef(*part['position'])
-        if 'scale' in part: glScalef(*part['scale'])
-        if part['shape'] == 'cube': glutSolidCube(*part['params'])
-        elif part['shape'] == 'sphere': glutSolidSphere(*part['params'])
+        glPushMatrix()
+        glColor3f(*(override_color if override_color else part['color']))
+        if 'position' in part:
+            glTranslatef(*part['position'])
+        if 'rotation' in part:
+            glRotatef(part['rotation'][2], 0, 0, 1) # Z-axis rotation for horns
+        if 'scale' in part:
+            glScalef(*part['scale'])
+        if part['shape'] == 'cube':
+            glutSolidCube(*part['params'])
+        elif part['shape'] == 'sphere':
+            glutSolidSphere(*part['params'])
         elif part['shape'] == 'cone':
-            glPushMatrix(); glRotatef(90, 1, 0, 0); gluCylinder(gluNewQuadric(), part['params'][0], 0, part['params'][1], part['params'][2], part['params'][3]); glPopMatrix()
+            glPushMatrix()
+            glRotatef(90, 1, 0, 0) # Orient the cone to point up
+            gluCylinder(gluNewQuadric(), part['params'][0], 0, part['params'][1], part['params'][2], part['params'][3])
+            glPopMatrix()
         glPopMatrix()
 
     glPopMatrix()
@@ -585,6 +727,38 @@ def draw_player():
 
     glPopMatrix() # End of player model matrix
 
+def spawn_boss():
+    """Creates and spawns the final boss."""
+    boss_template = ENEMY_CATALOG["Archdemon"]
+    
+    # Position the boss just inside the boss room, facing the door
+    position = [0, 1350, 0] 
+    
+    animation_params = {
+        'phase_offset': 0, 
+        'scale_factor': 0.03, 
+        'scale_speed': 1.0
+    }
+    
+    # Calculate the z_offset to stand on the floor
+    # This is a simplified calculation for the boss's specific leg shape
+    z_offset = (40 * 1.8) / 2 
+    
+    boss_npc = NPC(
+        position, 
+        boss_template["composition"], 
+        z_offset, 
+        animation_params, 
+        is_rogue=True,  # The boss is definitely a rogue!
+        has_quest=False, 
+        enemy_type="Archdemon"
+    )
+    
+    # Manually set stats from the catalog
+    boss_npc.stats = boss_template["stats"].copy()
+    
+    npcs.append(boss_npc)
+    print("The Archdemon has appeared!")
 
 def get_nearest_npc():
     """Finds the NPC closest to the player."""
@@ -597,17 +771,63 @@ def get_nearest_npc():
             closest_npc = npc
     return closest_npc, min_dist
 
+def check_for_rogue_defeat():
+    """Checks if all rogue NPCs are defeated and reveals the boss door if so."""
+    global boss_door
+    # Count how many rogue NPCs are left
+    rogues_remaining = sum(1 for npc in npcs if npc.is_rogue)
+    if rogues_remaining == 0 and boss_door.state == 'hidden':
+        boss_door.reveal()
+
 def check_item_collision():
     """Checks for and handles collision with dropped items."""
-    global dropped_items
+    global dropped_items, boss_door
+    
+    # Check for boss key collision first
+    if boss_door.key_present:
+        dist = math.sqrt((player.position[0] - boss_door.key.position[0])**2 + (player.position[1] - boss_door.key.position[1])**2)
+        if dist < player.collision_radius + boss_door.key.collision_radius:
+            print("You found the key! The grand door is opening...")
+            boss_door.open()
+            return # Prioritize the key over other items
+        
     for item in dropped_items[:]: # Iterate over a copy
         dist = math.sqrt((player.position[0] - item.position[0])**2 + (player.position[1] - item.position[1])**2)
         if dist < player.collision_radius + item.collision_radius:
-            item_found = random.choice(["Healing Potion", "Mana Potion", "Mysterious Potion"])
-            player.inventory[item_found] += 1
-            print(f"You picked up a {item_found}!") # Using print as a temporary notification
+            if item.item_type == 'loot':
+                item_found = random.choice(["Healing Potion", "Mana Potion", "Mysterious Potion"])
+                player.inventory[item_found] += 1
+                print(f"You picked up a {item_found}!") # Using print as a temporary notification
+            elif item.item_type == 'xp':
+                player.xp += item.value
+                print(f"You absorbed an XP orb! +{item.value} XP!")
             dropped_items.remove(item)
             break # Pick up one item per frame
+
+def initialize_pickups():
+    """Spawns loot and XP items across the manor wings."""
+    num_items = 7 # Total items to spawn
+    for _ in range(num_items):
+        # Choose a random wing
+        wing_bounds = random.choice(WING_BOUNDS)
+        x_min, x_max, y_min, y_max = wing_bounds
+        
+        # Get a random position within the wing
+        x = random.uniform(x_min + 50, x_max - 50)
+        y = random.uniform(y_min + 50, y_max - 50)
+        position = [x, y, 0]
+
+        # Randomly decide item type
+        if random.random() < 0.6: # 60% chance for loot
+            item_type = 'loot'
+            new_item = DroppedItem(position, item_type=item_type)
+        else: # 40% chance for XP
+            item_type = 'xp'
+            xp_value = random.choice([10, 25, 50])
+            new_item = DroppedItem(position, item_type=item_type, value=xp_value)
+            
+        dropped_items.append(new_item)
+
 
 def keyboardListener(key, x, y):
     """
@@ -625,6 +845,7 @@ def keyboardListener(key, x, y):
                 random.shuffle(spawn_list)
                 for i, is_rogue in enumerate(spawn_list): 
                     generate_and_spawn_npc(is_rogue, WING_BOUNDS[i])
+                initialize_pickups()
 
     elif game_state == "playing":
         # --- FIX ---
@@ -654,6 +875,15 @@ def keyboardListener(key, x, y):
         # D to rotate right
         if key == b'd':
             player.rotation_angle -= player.rotate_speed
+        
+        if key == b'c':
+            global god_mode
+            god_mode = not god_mode
+            if god_mode:
+                print("God Mode Activated!")
+            else:
+                print("God Mode Deactivated!")
+            return
         
         if key == b'i':
             npc_to_interact, dist = get_nearest_npc()
@@ -764,14 +994,37 @@ def keyboardListener(key, x, y):
         if combat_menu_state == "main":
             if key == b'1': # Attack
                 vfx_timers['attack_flash'] = 0.2
-                if player.weapon == "Sword": player_damage = player.stats["Strength"] + random.randint(1, 6)
+                if god_mode:
+                    player_damage = 9999 # Insta-kill damage
+                elif player.weapon == "Sword": player_damage = player.stats["Strength"] + random.randint(1, 6)
                 else: player_damage = player.stats["Intelligence"] + random.randint(1, 4)
-                if player.buff_turns > 0:
+                if player.buff_turns > 0 and not god_mode:
                     bonus_damage = 10; player_damage += bonus_damage
                     combat_log.append(f"Your buff adds {bonus_damage} damage!")
                 collided_npc.stats["Health"] -= player_damage
                 combat_log.append(f"You attack for {player_damage} damage.")
-                enemy_turn()
+                
+                # Check for enemy defeat immediately after the attack.(GOD MODE)
+                if collided_npc.stats["Health"] <= 0:
+                    player.xp += 50
+                    combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP")
+                    if collided_npc.is_rogue:
+                        npcs.remove(collided_npc)
+                        check_for_rogue_defeat() # Check after a rogue is defeated
+                    else:
+                        npcs.remove(collided_npc)
+                    
+                    # Loot Drop Logic
+                    if random.random() < 0.8: # 80% chance to drop an item
+                        new_item = DroppedItem(collided_npc.position, item_type='loot')
+                        dropped_items.append(new_item)
+                        print("The enemy dropped a loot bag!")
+                    
+                    game_state = "playing"
+                    return # Exit before the enemy gets a turn
+                else:
+                    # If the enemy is not defeated, it takes its turn.
+                    enemy_turn()
             elif key == b'2': # Cast Magic
                 combat_menu_state = "magic"
                 if player.weapon == "Sword": dialogue_options = ["Heal", "Protection", "Buff", "Back"]
@@ -791,8 +1044,9 @@ def keyboardListener(key, x, y):
             elif key == b'4': combat_menu_state = "main"; dialogue_options = ["Attack", "Cast Magic", "Use Item", "Flee"]; return
             if spell_name:
                 mana_cost = MANA_COSTS.get(spell_name, 0)
-                if player.stats["Mana"] >= mana_cost:
-                    player.stats["Mana"] -= mana_cost
+                if player.stats["Mana"] >= mana_cost or god_mode:
+                    if not god_mode:
+                        player.stats["Mana"] -= mana_cost
                     if spell_name == "Heal":
                         heal_amount = player.stats["Intelligence"] * 3 + random.randint(5,10)
                         player.stats["Health"] = min(100, player.stats["Health"] + heal_amount); combat_log.append(f"You heal for {heal_amount} HP."); vfx_timers['heal'] = 0.5
@@ -836,15 +1090,27 @@ def keyboardListener(key, x, y):
 def enemy_turn():
     """Logic for the enemy's action in combat."""
     global dropped_items
+    if god_mode:
+        return # Player is invincible and takes no damage
     if collided_npc.stats["Health"] <= 0:
-        player.xp += 50; combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP")
+        player.xp += 50
+        combat_log.append(f"You defeated the {collided_npc.enemy_type}! +50 XP")
+        
+        if collided_npc.is_rogue:
+            npcs.remove(collided_npc)
+            check_for_rogue_defeat() # Check after a rogue is defeated
+        else:
+            npcs.remove(collided_npc)
+
         # Loot Drop Logic
-        loot_chance = 0.8 # 80% chance to drop an item
-        if random.random() < loot_chance:
-            new_item = DroppedItem(collided_npc.position)
+        if random.random() < 0.8: # 80% chance to drop an item
+            new_item = DroppedItem(collided_npc.position, item_type='loot')
             dropped_items.append(new_item)
-            print(f"The enemy dropped a loot bag!")
-        npcs.remove(collided_npc); global game_state; game_state = "playing"; return
+            print("The enemy dropped a loot bag!")
+        
+        global game_state
+        game_state = "playing"
+        return
     
     enemy_damage = collided_npc.stats["Strength"] + random.randint(1, 3)
     if player.debuff_turns > 0: enemy_damage = int(enemy_damage * 1.5)
@@ -955,6 +1221,9 @@ def idle():
     last_time = now
     total_time += delta_time # Keep a running total of elapsed time
 
+    # Update the boss door animation
+    boss_door.update(delta_time)
+
     # Update VFX timers
     for effect in list(vfx_timers.keys()):
         if isinstance(vfx_timers[effect], dict): 
@@ -1026,6 +1295,7 @@ def draw_manor_layout():
     draw_wall_segment(-hall_x, -1200, hall_x, -1200, WALL_HEIGHT, wall_color)
     draw_wall_segment(-hall_x, 1200, hall_x, 1200, WALL_HEIGHT, wall_color)
 
+    
     # --- Wing Walls ---
     for bounds in WING_BOUNDS:
         x_min, x_max, y_min, y_max = bounds
@@ -1039,15 +1309,13 @@ def draw_manor_layout():
         draw_wall_segment(x_min, y_max, x_max, y_max, WALL_HEIGHT, wall_color)
 
     # --- Boss Room Walls ---
-    bx_min, bx_max, by_min, by_max = BOSS_ROOM_BOUNDS
-    draw_wall_segment(bx_min, by_min, bx_min, by_max, WALL_HEIGHT, wall_color)
-    draw_wall_segment(bx_max, by_min, bx_max, by_max, WALL_HEIGHT, wall_color)
-    draw_wall_segment(bx_min, by_max, bx_max, by_max, WALL_HEIGHT, wall_color)
+    # Back and Front walls of the hall
 
 def draw_manor_environment():
     """Draws the complete spooky manor environment."""
     draw_wood_floor()
     draw_manor_layout()
+    boss_door.draw()
     #draw_manor_props()
 
 def showScreen():
@@ -1070,12 +1338,16 @@ def showScreen():
         # --- NEW: Draw the manor environment ---
         draw_manor_environment()
 
-        # --- Display Player Stats ---
-        draw_text(10, 770, f"Level: {player.level} (XP: {player.xp}/{player.xp_to_next_level})")
-        y_offset = 740
-        for stat, value in player.stats.items():
-            draw_text(10, y_offset, f"{stat}: {value}")
-            y_offset -= 30
+        if god_mode:
+            draw_text(10, 770, "GOD MODE ACTIVE")
+            draw_text(10, 740, "Health: INFINITE")
+            draw_text(10, 710, "Mana: INFINITE")
+        else:
+            draw_text(10, 770, f"Level: {player.level} (XP: {player.xp}/{player.xp_to_next_level})")
+            y_offset = 740
+            for stat, value in player.stats.items():
+                draw_text(10, y_offset, f"{stat}: {value}")
+                y_offset -= 30
         
         # --- Draw the Player Model ---
         draw_player()
