@@ -1464,7 +1464,7 @@ def main():
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH)  # Double buffering, RGB color, depth test
     glutInitWindowSize(1000, 800)  # Window size
     glutInitWindowPosition(0, 0)  # Window position
-    wind = glutCreateWindow(b"3D OpenGL Intro")  
+    wind = glutCreateWindow(b"Restricted World")  
     glEnable(GL_DEPTH_TEST)  
     glutDisplayFunc(showScreen)  
     glutKeyboardFunc(keyboardListener)  

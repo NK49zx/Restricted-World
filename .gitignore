@@ -1,3 +1,7 @@
 A03.py
 draf.py
 Draft2.py
+
+# Python bytecode cache (embeds local file paths)
+__pycache__/
+*.pyc
